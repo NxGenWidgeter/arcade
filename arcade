@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Arcade launcher: one entry point for the dock, the app menu and a terminal.
+# A second launch of the same desktop entry just raises the open window.
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
+# The system interpreter, not whatever python3 is first on PATH: a virtualenv
+# or pyenv shim has no gi module, and this app is nothing without GTK/WebKit.
+PY=/usr/bin/python3
+[ -x "$PY" ] || PY=$(command -v python3) || {
+    echo "Arcade needs python3 with GTK 3 and WebKit2 4.1 installed." >&2
+    exit 1
+}
+
+exec "$PY" "$here/app.py" "$@"

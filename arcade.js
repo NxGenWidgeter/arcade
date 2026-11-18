@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
-   NxGen Arcade — six turn-based games, entirely offline.
+   NxGen Arcade — ten games, entirely offline.
    No dependencies, no network, no build step.
    ============================================================ */
 (() => {
@@ -888,7 +888,649 @@ const checkers = (() => {
 })();
 
 /* ============================================================
-   5. FIVE IN A ROW (gomoku)
+   5. CHESS
+   ============================================================ */
+const chess = (() => {
+  const PAWN = 1, KNIGHT = 2, BISHOP = 3, ROOK = 4, QUEEN = 5, KING = 6;
+  const WHITE = 1, BLACK = -1;
+  const MATE = 100000;
+  const GLYPH = ['', '\u265f', '\u265e', '\u265d', '\u265c', '\u265b', '\u265a'];
+  const NAME = ['', 'pawn', 'knight', 'bishop', 'rook', 'queen', 'king'];
+  const MAT = [0, 100, 320, 330, 500, 900, 0];
+  const KN = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+  const DIAG = [[-1,-1],[-1,1],[1,-1],[1,1]];
+  const ORTH = [[-1,0],[1,0],[0,-1],[0,1]];
+  const ROYAL = DIAG.concat(ORTH);
+  const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  const CODE = { p: PAWN, n: KNIGHT, b: BISHOP, r: ROOK, q: QUEEN, k: KING };
+  const sideOf = v => (v > 0 ? WHITE : BLACK);
+
+  /* squares are 0..63 from a8 (top left) to h1; white sits at the bottom */
+  const PAWN_T = [
+      0,  0,  0,  0,  0,  0,  0,  0,
+     50, 50, 50, 50, 50, 50, 50, 50,
+     10, 10, 20, 30, 30, 20, 10, 10,
+      5,  5, 10, 25, 25, 10,  5,  5,
+      0,  0,  0, 20, 20,  0,  0,  0,
+      5, -5,-10,  0,  0,-10, -5,  5,
+      5, 10, 10,-20,-20, 10, 10,  5,
+      0,  0,  0,  0,  0,  0,  0,  0];
+  const KNIGHT_T = [
+    -50,-40,-30,-30,-30,-30,-40,-50,
+    -40,-20,  0,  0,  0,  0,-20,-40,
+    -30,  0, 10, 15, 15, 10,  0,-30,
+    -30,  5, 15, 20, 20, 15,  5,-30,
+    -30,  0, 15, 20, 20, 15,  0,-30,
+    -30,  5, 10, 15, 15, 10,  5,-30,
+    -40,-20,  0,  5,  5,  0,-20,-40,
+    -50,-40,-30,-30,-30,-30,-40,-50];
+  const BISHOP_T = [
+    -20,-10,-10,-10,-10,-10,-10,-20,
+    -10,  0,  0,  0,  0,  0,  0,-10,
+    -10,  0,  5, 10, 10,  5,  0,-10,
+    -10,  5,  5, 10, 10,  5,  5,-10,
+    -10,  0, 10, 10, 10, 10,  0,-10,
+    -10, 10, 10, 10, 10, 10, 10,-10,
+    -10,  5,  0,  0,  0,  0,  5,-10,
+    -20,-10,-10,-10,-10,-10,-10,-20];
+  const ROOK_T = [
+      0,  0,  0,  0,  0,  0,  0,  0,
+      5, 10, 10, 10, 10, 10, 10,  5,
+     -5,  0,  0,  0,  0,  0,  0, -5,
+     -5,  0,  0,  0,  0,  0,  0, -5,
+     -5,  0,  0,  0,  0,  0,  0, -5,
+     -5,  0,  0,  0,  0,  0,  0, -5,
+     -5,  0,  0,  0,  0,  0,  0, -5,
+      0,  0,  0,  5,  5,  0,  0,  0];
+  const QUEEN_T = [
+    -20,-10,-10, -5, -5,-10,-10,-20,
+    -10,  0,  0,  0,  0,  0,  0,-10,
+    -10,  0,  5,  5,  5,  5,  0,-10,
+     -5,  0,  5,  5,  5,  5,  0, -5,
+      0,  0,  5,  5,  5,  5,  0, -5,
+    -10,  5,  5,  5,  5,  5,  0,-10,
+    -10,  0,  5,  0,  0,  0,  0,-10,
+    -20,-10,-10, -5, -5,-10,-10,-20];
+  const KING_MID = [
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -20,-30,-30,-40,-40,-30,-30,-20,
+    -10,-20,-20,-20,-20,-20,-20,-10,
+     20, 20,  0,  0,  0,  0, 20, 20,
+     20, 30, 10,  0,  0, 10, 30, 20];
+  const KING_END = [
+    -50,-40,-30,-20,-20,-30,-40,-50,
+    -30,-20,-10,  0,  0,-10,-20,-30,
+    -30,-10, 20, 30, 30, 20,-10,-30,
+    -30,-10, 30, 40, 40, 30,-10,-30,
+    -30,-10, 30, 40, 40, 30,-10,-30,
+    -30,-10, 20, 30, 30, 20,-10,-30,
+    -30,-30,  0,  0,  0,  0,-30,-30,
+    -50,-30,-30,-30,-30,-30,-30,-50];
+  const TABLES = [null, PAWN_T, KNIGHT_T, BISHOP_T, ROOK_T, QUEEN_T, null];
+
+  /* ---------------- position ---------------- */
+  function fromFen(fen) {
+    const parts = fen.trim().split(/\s+/);
+    const b = new Int8Array(64);
+    let i = 0;
+    for (const ch of parts[0]) {
+      if (ch === '/') continue;
+      if (ch >= '1' && ch <= '8') { i += +ch; continue; }
+      const code = CODE[ch.toLowerCase()];
+      if (code) b[i++] = ch === ch.toLowerCase() ? -code : code;
+    }
+    let castle = 0;
+    const rights = parts[2] || '-';
+    if (rights.includes('K')) castle |= 1;
+    if (rights.includes('Q')) castle |= 2;
+    if (rights.includes('k')) castle |= 4;
+    if (rights.includes('q')) castle |= 8;
+    const ep = parts[3] && parts[3] !== '-' ? alg(parts[3]) : -1;
+    return { b, turn: parts[1] === 'b' ? BLACK : WHITE, castle, ep, half: +(parts[4] || 0) };
+  }
+  function alg(sq) {
+    const c = sq.charCodeAt(0) - 97, r = 8 - +sq[1];
+    return r >= 0 && r < 8 && c >= 0 && c < 8 ? r * 8 + c : -1;
+  }
+  const initial = () => fromFen(START);
+  const clone = st => ({ b: Int8Array.from(st.b), turn: st.turn, castle: st.castle, ep: st.ep, half: st.half });
+
+  function kingSq(b, side) {
+    const k = KING * side;
+    for (let i = 0; i < 64; i++) if (b[i] === k) return i;
+    return -1;
+  }
+
+  function attacked(b, sq, by) {
+    if (sq < 0) return false;
+    const r = sq >> 3, c = sq & 7;
+    const pr = r + by;                                  // a pawn of `by` attacks upward
+    if (pr >= 0 && pr < 8) {
+      for (const dc of [-1, 1]) {
+        const cc = c + dc;
+        if (cc < 0 || cc > 7) continue;
+        if (b[pr * 8 + cc] === PAWN * by) return true;
+      }
+    }
+    for (const [dr, dc] of KN) {
+      const rr = r + dr, cc = c + dc;
+      if (rr < 0 || rr > 7 || cc < 0 || cc > 7) continue;
+      if (b[rr * 8 + cc] === KNIGHT * by) return true;
+    }
+    for (const [dr, dc] of ROYAL) {
+      const rr = r + dr, cc = c + dc;
+      if (rr < 0 || rr > 7 || cc < 0 || cc > 7) continue;
+      if (b[rr * 8 + cc] === KING * by) return true;
+    }
+    for (const [dr, dc] of ORTH) {
+      let rr = r + dr, cc = c + dc;
+      while (rr >= 0 && rr < 8 && cc >= 0 && cc < 8) {
+        const v = b[rr * 8 + cc];
+        if (v) { if (v === ROOK * by || v === QUEEN * by) return true; break; }
+        rr += dr; cc += dc;
+      }
+    }
+    for (const [dr, dc] of DIAG) {
+      let rr = r + dr, cc = c + dc;
+      while (rr >= 0 && rr < 8 && cc >= 0 && cc < 8) {
+        const v = b[rr * 8 + cc];
+        if (v) { if (v === BISHOP * by || v === QUEEN * by) return true; break; }
+        rr += dr; cc += dc;
+      }
+    }
+    return false;
+  }
+  const inCheck = (st, side) => attacked(st.b, kingSq(st.b, side), -side);
+
+  /* ---------------- move generation ---------------- */
+  const move = (from, to, promo, flag) => ({ from, to, promo: promo || 0, flag: flag || 0 });
+
+  function pawnMoves(out, from, to, promote) {
+    if (promote) {
+      out.push(move(from, to, QUEEN), move(from, to, ROOK), move(from, to, BISHOP), move(from, to, KNIGHT));
+    } else out.push(move(from, to));
+  }
+
+  function pseudo(st, side, capsOnly) {
+    const b = st.b, out = [];
+    for (let from = 0; from < 64; from++) {
+      const v = b[from];
+      if (!v || sideOf(v) !== side) continue;
+      const code = v > 0 ? v : -v;
+      const r = from >> 3, c = from & 7;
+      if (code === PAWN) {
+        const rr = r - side;
+        if (rr < 0 || rr > 7) continue;
+        const promote = rr === (side === WHITE ? 0 : 7);
+        const one = rr * 8 + c;
+        if (!capsOnly && !b[one]) {
+          pawnMoves(out, from, one, promote);
+          if (r === (side === WHITE ? 6 : 1) && !b[from - side * 16]) out.push(move(from, from - side * 16, 0, 1));
+        }
+        for (const dc of [-1, 1]) {
+          const cc = c + dc;
+          if (cc < 0 || cc > 7) continue;
+          const to = rr * 8 + cc, t = b[to];
+          if (t) { if (sideOf(t) !== side) pawnMoves(out, from, to, promote); }
+          else if (to === st.ep) out.push(move(from, to, 0, 2));
+        }
+      } else if (code === KNIGHT || code === KING) {
+        for (const [dr, dc] of (code === KNIGHT ? KN : ROYAL)) {
+          const rr = r + dr, cc = c + dc;
+          if (rr < 0 || rr > 7 || cc < 0 || cc > 7) continue;
+          const to = rr * 8 + cc, t = b[to];
+          if (t && sideOf(t) === side) continue;
+          if (capsOnly && !t) continue;
+          out.push(move(from, to));
+        }
+      } else {
+        const dirs = code === BISHOP ? DIAG : code === ROOK ? ORTH : ROYAL;
+        for (const [dr, dc] of dirs) {
+          let rr = r + dr, cc = c + dc;
+          while (rr >= 0 && rr < 8 && cc >= 0 && cc < 8) {
+            const to = rr * 8 + cc, t = b[to];
+            if (t) {
+              if (sideOf(t) !== side) out.push(move(from, to));
+              break;
+            }
+            if (!capsOnly) out.push(move(from, to));
+            rr += dr; cc += dc;
+          }
+        }
+      }
+    }
+    if (!capsOnly) {
+      const home = side === WHITE ? 60 : 4;
+      if (b[home] === KING * side) {
+        const kBit = side === WHITE ? 1 : 4, qBit = side === WHITE ? 2 : 8;
+        const safe = sq => !attacked(b, sq, -side);
+        if ((st.castle & kBit) && b[home + 3] === ROOK * side && !b[home + 1] && !b[home + 2] &&
+            safe(home) && safe(home + 1) && safe(home + 2)) {
+          out.push(move(home, home + 2, 0, 3));
+        }
+        if ((st.castle & qBit) && b[home - 4] === ROOK * side && !b[home - 1] && !b[home - 2] && !b[home - 3] &&
+            safe(home) && safe(home - 1) && safe(home - 2)) {
+          out.push(move(home, home - 2, 0, 3));
+        }
+      }
+    }
+    return out;
+  }
+
+  /* make/unmake in place: the search walks thousands of these, so no copies */
+  function make(st, m) {
+    const b = st.b, piece = b[m.from], side = sideOf(piece);
+    const rec = {
+      from: m.from, to: m.to, piece, cap: b[m.to], flag: m.flag,
+      castle: st.castle, ep: st.ep, half: st.half, capSq: -1, rook: null
+    };
+    if (m.flag === 2) {
+      rec.capSq = m.to + 8 * side;
+      rec.cap = b[rec.capSq];
+      b[rec.capSq] = 0;
+    }
+    b[m.to] = m.promo ? m.promo * side : piece;
+    b[m.from] = 0;
+    if (m.flag === 3) {
+      const from = m.to > m.from ? m.from + 3 : m.from - 4;
+      const to = m.to > m.from ? m.from + 1 : m.from - 1;
+      b[to] = b[from]; b[from] = 0;
+      rec.rook = [from, to];
+    }
+    let c = st.castle;
+    if (Math.abs(piece) === KING) c &= side === WHITE ? ~3 : ~12;
+    if (m.from === 63 || m.to === 63) c &= ~1;
+    if (m.from === 56 || m.to === 56) c &= ~2;
+    if (m.from === 7 || m.to === 7) c &= ~4;
+    if (m.from === 0 || m.to === 0) c &= ~8;
+    st.castle = c;
+    st.ep = m.flag === 1 ? (m.from + m.to) >> 1 : -1;
+    st.half = (Math.abs(piece) === PAWN || rec.cap) ? 0 : st.half + 1;
+    st.turn = -side;
+    return rec;
+  }
+  function unmake(st, m, rec) {
+    const b = st.b;
+    b[rec.from] = rec.piece;
+    b[rec.to] = rec.cap;
+    if (rec.flag === 2) { b[rec.to] = 0; b[rec.capSq] = rec.cap; }
+    if (rec.rook) { b[rec.rook[0]] = b[rec.rook[1]]; b[rec.rook[1]] = 0; }
+    st.castle = rec.castle;
+    st.ep = rec.ep;
+    st.half = rec.half;
+    st.turn = -st.turn;
+  }
+
+  function legalFrom(st, side, list) {
+    const k0 = kingSq(st.b, side), out = [];
+    for (const m of list) {
+      const rec = make(st, m);
+      const k = m.from === k0 ? m.to : k0;
+      if (!attacked(st.b, k, -side)) out.push(m);
+      unmake(st, m, rec);
+    }
+    return out;
+  }
+  const legal = (st, side) => legalFrom(st, side, pseudo(st, side, false));
+
+  /* ---------------- evaluation ---------------- */
+  function evaluate(b, side) {
+    let total = 0, score = 0;
+    for (let i = 0; i < 64; i++) { const v = b[i]; if (v) total += MAT[v > 0 ? v : -v]; }
+    const endgame = total < 2400;
+    for (let i = 0; i < 64; i++) {
+      const v = b[i];
+      if (!v) continue;
+      const s = sideOf(v), code = v > 0 ? v : -v;
+      const table = code === KING ? (endgame ? KING_END : KING_MID) : TABLES[code];
+      score += s * (MAT[code] + table[s === WHITE ? i : i ^ 56]);
+    }
+    return score * side;
+  }
+
+  function order(st, moves) {
+    const b = st.b;
+    const key = m => {
+      let s = 0;
+      const cap = b[m.to];
+      if (cap) s += 1000 + MAT[cap > 0 ? cap : -cap] * 10 - MAT[Math.abs(b[m.from])];
+      if (m.flag === 2) s += 1000 + 90 - MAT[PAWN];
+      if (m.promo) s += MAT[m.promo] * 8;
+      if (m.flag === 3) s += 40;
+      return s;
+    };
+    moves.sort((x, y) => key(y) - key(x));
+    return moves;
+  }
+
+  /* ---------------- search ---------------- */
+  let nodes = 0, deadline = 0, aborted = false;
+  const timeUp = () => { nodes++; return (nodes & 511) === 0 && now() > deadline; };
+
+  function quiesce(st, alpha, beta, ply) {
+    if (timeUp()) { aborted = true; return 0; }
+    const side = st.turn;
+    if (ply > 20) return evaluate(st.b, side);
+    if (inCheck(st, side)) {
+      const moves = legal(st, side);
+      if (!moves.length) return -MATE + ply;
+      order(st, moves);
+      for (const m of moves) {
+        const rec = make(st, m);
+        const sc = -quiesce(st, -beta, -alpha, ply + 1);
+        unmake(st, m, rec);
+        if (aborted) return 0;
+        if (sc >= beta) return beta;
+        if (sc > alpha) alpha = sc;
+      }
+      return alpha;
+    }
+    const stand = evaluate(st.b, side);
+    if (stand >= beta) return beta;
+    if (stand > alpha) alpha = stand;
+    const caps = order(st, legalFrom(st, side, pseudo(st, side, true)));
+    for (const m of caps) {
+      const rec = make(st, m);
+      const sc = -quiesce(st, -beta, -alpha, ply + 1);
+      unmake(st, m, rec);
+      if (aborted) return stand;
+      if (sc >= beta) return beta;
+      if (sc > alpha) alpha = sc;
+    }
+    return alpha;
+  }
+
+  function search(st, depth, alpha, beta, ply) {
+    if (timeUp()) { aborted = true; return 0; }
+    const side = st.turn;
+    if (ply < 10 && inCheck(st, side)) depth++;          // check extension
+    if (depth <= 0) return quiesce(st, alpha, beta, ply);
+    const moves = legal(st, side);
+    if (!moves.length) return inCheck(st, side) ? -MATE + ply : 0;
+    if (st.half >= 100) return 0;
+    order(st, moves);
+    let best = -Infinity;
+    for (const m of moves) {
+      const rec = make(st, m);
+      const sc = -search(st, depth - 1, -beta, -alpha, ply + 1);
+      unmake(st, m, rec);
+      if (aborted) return best === -Infinity ? 0 : best;
+      if (sc > best) best = sc;
+      if (best > alpha) alpha = best;
+      if (alpha >= beta) break;
+    }
+    return best;
+  }
+
+  /* iterative deepening: keep the last completed depth's ranking */
+  function choose(st0, maxDepth, budget) {
+    const st = clone(st0);
+    const moves = legal(st, st.turn);
+    if (!moves.length) return null;
+    nodes = 0; deadline = now() + budget; aborted = false;
+    let ranked = null;
+    for (let d = 1; d <= maxDepth; d++) {
+      const list = ranked ? ranked.map(x => x.m) : moves.slice();
+      if (!ranked) order(st, list);
+      const scored = [];
+      let alpha = -Infinity;
+      for (const m of list) {
+        const rec = make(st, m);
+        const sc = -search(st, d - 1, -Infinity, -alpha, 1);
+        unmake(st, m, rec);
+        if (aborted) break;
+        scored.push({ m, sc });
+        if (sc > alpha) alpha = sc;
+      }
+      if (aborted || !scored.length) break;
+      scored.sort((a, b) => b.sc - a.sc);
+      ranked = scored;
+      if (scored[0].sc > MATE - 1000 || now() > deadline) break;
+    }
+    return ranked ? ranked[0] : { m: moves[0], sc: 0 };
+  }
+
+  function insufficient(b) {
+    let minors = 0;
+    for (let i = 0; i < 64; i++) {
+      const v = b[i];
+      if (!v) continue;
+      const code = v > 0 ? v : -v;
+      if (code === KING) continue;
+      if (code !== BISHOP && code !== KNIGHT) return false;
+      minors++;
+    }
+    return minors <= 2;
+  }
+
+  function perft(st, depth) {
+    if (depth === 0) return 1;
+    const moves = legal(st, st.turn);
+    if (depth === 1) return moves.length;
+    let n = 0;
+    for (const m of moves) {
+      const rec = make(st, m);
+      n += perft(st, depth - 1);
+      unmake(st, m, rec);
+    }
+    return n;
+  }
+
+  /* Read-only hook for ctest.py: perft plus a FEN loader, never touches a
+     mounted game's state. */
+  window.__nxChess = {
+    perft: (fen, depth) => perft(fromFen(fen || START), depth),
+    start: START
+  };
+
+  return {
+    id: 'ch',
+    name: 'Chess',
+    tag: 'the old one',
+    blurb: 'Every rule as written — castling, en passant, promotion. Sixty-four squares and no excuses.',
+    rules: 'Click a piece, then the square to move it. Checkmate ends it; stalemate, not enough material or fifty quiet moves is a draw. Pawns promote on the far rank.',
+    mount(ctx) {
+      const mode = ctx.mode, diff = ctx.diff, HUMAN = WHITE;
+      let st = initial(), over = false, hist = [], sel = null, last = null, promo = null, tips = [];
+
+      const board = mk('div', 'board ch');
+      ctx.boardEl.appendChild(board);
+      const sqs = [];
+      for (let i = 0; i < 64; i++) {
+        const s = mk('div', 'sq');
+        s.setAttribute('role', 'button');
+        s.setAttribute('tabindex', '0');
+        s.setAttribute('aria-label', String.fromCharCode(97 + (i & 7)) + (8 - (i >> 3)));
+        s.addEventListener('click', () => click(i));
+        s.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); click(i); }
+        });
+        board.appendChild(s); sqs.push(s);
+      }
+      const humanTurn = () => mode === 'two' || st.turn === HUMAN;
+
+      function render() {
+        const b = st.b;
+        const dests = sel != null ? legal(st, st.turn).filter(m => m.from === sel) : [];
+        const checkSq = inCheck(st, st.turn) ? kingSq(b, st.turn) : -1;
+        for (let i = 0; i < 64; i++) {
+          const v = b[i], s = sqs[i];
+          s.className = 'sq ' + (((i >> 3) + (i & 7)) % 2 === 0 ? 'light' : 'dark');
+          s.textContent = '';
+          if (v) {
+            const p = mk('div', 'pc ' + (v > 0 ? 'w' : 'b'), GLYPH[v > 0 ? v : -v]);
+            s.appendChild(p);
+          }
+        }
+        if (last) {
+          sqs[last.from].classList.add('last');
+          sqs[last.to].classList.add('last');
+        }
+        if (sel != null) sqs[sel].classList.add('sel');
+        for (const m of dests) {
+          sqs[m.to].classList.add('dest');
+          if (b[m.to]) sqs[m.to].classList.add('cap');
+          else if (m.flag === 2) sqs[m.to + 8 * st.turn].classList.add('doomed');
+        }
+        if (checkSq >= 0) sqs[checkSq].classList.add('check');
+        for (const t of tips) sqs[t].classList.add('hint');
+      }
+
+      function sync() {
+        if (over) return;
+        const chk = inCheck(st, st.turn);
+        if (mode === 'two') {
+          ctx.setStatus((st.turn === WHITE ? 'White' : 'Black') + (chk ? ' is in check' : ' to move'), 'you');
+        } else if (st.turn === HUMAN) {
+          ctx.setStatus(chk ? 'Check — your move' : 'Your move', 'you');
+        } else {
+          ctx.setStatus(chk ? 'Talia is in check…' : 'Talia is thinking…', 'ai');
+        }
+      }
+
+      function finish(kind, winner) {
+        over = true; sel = null; render();
+        let res, label;
+        if (kind === 'mate') {
+          if (mode === 'two') {
+            label = (winner === WHITE ? 'White' : 'Black') + ' wins by checkmate';
+            ctx.setStatus(label, 'win'); Sound.win(); ctx.end(null, label); return;
+          }
+          if (winner === HUMAN) { res = 'w'; label = 'Checkmate — you win'; }
+          else { res = 'l'; label = 'Checkmate — Talia wins'; }
+        } else if (kind === 'stale') { res = 'd'; label = 'Stalemate — draw'; }
+        else if (kind === 'material') { res = 'd'; label = 'Draw — not enough material'; }
+        else { res = 'd'; label = 'Draw — fifty quiet moves'; }
+
+        if (res === 'w') { ctx.setStatus('You win', 'win'); Sound.win(); }
+        else if (res === 'l') { ctx.setStatus('Talia wins', 'lose'); Sound.lose(); }
+        else { ctx.setStatus('Draw', 'draw'); Sound.draw(); }
+        ctx.end(res, label);
+      }
+
+      function afterMove(mover) {
+        const side = st.turn;
+        render();
+        if (!legal(st, side).length) return finish(inCheck(st, side) ? 'mate' : 'stale', mover);
+        if (st.half >= 100) return finish('fifty', 0);
+        if (insufficient(st.b)) return finish('material', 0);
+        sync();
+        if (mode === 'ai' && st.turn !== HUMAN) think();
+      }
+
+      function snapshot() {
+        return { b: Int8Array.from(st.b), turn: st.turn, castle: st.castle, ep: st.ep, half: st.half, last };
+      }
+
+      function doMove(m) {
+        const mover = st.turn;
+        hist.push(snapshot());
+        const rec = make(st, m);
+        last = m; sel = null;
+        if (rec.cap) Sound.capture(); else Sound.chip();
+        afterMove(mover);
+      }
+
+      function askPromotion(cand) {
+        promo = cand;
+        const veil = mk('div', 'promo');
+        const tray = mk('div', 'tray');
+        for (const code of [QUEEN, ROOK, BISHOP, KNIGHT]) {
+          const btn = mk('button', 'pbtn ' + (st.turn > 0 ? 'w' : 'b'), GLYPH[code]);
+          btn.type = 'button';
+          btn.setAttribute('aria-label', 'promote to ' + NAME[code]);
+          btn.addEventListener('click', () => {
+            const chosen = promo && promo.find(m => m.promo === code);
+            promo = null;
+            veil.remove();
+            if (chosen) doMove(chosen);
+            else render();
+          });
+          tray.appendChild(btn);
+        }
+        veil.appendChild(tray);
+        board.appendChild(veil);
+      }
+
+      function click(i) {
+        if (over || promo || !humanTurn()) return;
+        const moves = legal(st, st.turn);
+        if (sel != null) {
+          const cand = moves.filter(m => m.from === sel && m.to === i);
+          if (cand.length) {
+            if (cand[0].promo) return askPromotion(cand);
+            return doMove(cand[0]);
+          }
+        }
+        if (st.b[i] && sideOf(st.b[i]) === st.turn && moves.some(m => m.from === i)) {
+          sel = sel === i ? null : i;
+          Sound.click();
+          render();
+        } else if (sel != null) { sel = null; render(); }
+      }
+
+      async function think() {
+        await aiDelay();
+        if (!ctx.alive() || over) return;
+        // Undo or a new game may have landed while this turn was queued.
+        if (mode === 'ai' && st.turn === HUMAN) return;
+        const legalNow = legal(st, st.turn);
+        if (!legalNow.length) return finish(inCheck(st, st.turn) ? 'mate' : 'stale', -st.turn);
+        if (Math.random() < [0.3, 0.05, 0][diff]) return doMove(pick(legalNow));
+        const best = choose(st, [1, 3, 5][diff], BUDGET[diff]);
+        if (!best) return;
+        doMove(best.m);
+      }
+
+      function undo() {
+        if (!hist.length) return;
+        over = false; ctx.clearBanner(); sel = null;
+        if (promo) { promo = null; const v = board.querySelector('.promo'); if (v) v.remove(); }
+        let s = hist.pop();
+        while (mode === 'ai' && s.turn !== HUMAN && hist.length) s = hist.pop();
+        st = { b: Int8Array.from(s.b), turn: s.turn, castle: s.castle, ep: s.ep, half: s.half };
+        last = s.last || null;
+        render(); sync();
+      }
+
+      function hint() {
+        if (over || !humanTurn()) return;
+        const best = choose(st, 3, 320);
+        if (!best) return;
+        sel = best.m.from;
+        tips = [best.m.from, best.m.to];
+        render();
+        Sound.click();
+        setTimeout(() => {
+          tips = [];
+          if (!over) { sel = null; render(); }
+        }, 2000);
+      }
+
+      /* Dev hook, used by ctest.py: drop a FEN straight into the live board.
+         A no-op once the game has been left, so it can never touch a stale view. */
+      if (window.__nxChess) {
+        window.__nxChess.load = fen => {
+          if (!ctx.alive()) return false;
+          st = fromFen(fen); hist = []; over = false; sel = null; last = null; tips = [];
+          if (promo) { promo = null; const v = board.querySelector('.promo'); if (v) v.remove(); }
+          ctx.clearBanner(); render(); sync();
+          if (mode === 'ai' && st.turn !== HUMAN) think();
+          return true;
+        };
+      }
+
+      render(); sync();
+      return { undo, hint };
+    }
+  };
+})();
+
+/* ============================================================
+   6. FIVE IN A ROW (gomoku)
    ============================================================ */
 const gomoku = (() => {
   const SZ = 15;
@@ -1073,7 +1715,7 @@ const gomoku = (() => {
 })();
 
 /* ============================================================
-   6. MANCALA (Kalah)
+   7. MANCALA (Kalah)
    ============================================================ */
 const mancala = (() => {
   const PITS = 14;
@@ -1287,7 +1929,7 @@ const SUIT_SYM = ['♦', '♣', '♥', '♠'];
 
 function cardNode(label, suit, hidden) {
   const red = suit === 0 || suit === 2;
-  const el = mk('div', 'card' + (hidden ? ' back' : '') + (!hidden && red ? ' red' : ''));
+  const el = mk('div', 'pcard' + (hidden ? ' back' : '') + (!hidden && red ? ' red' : ''));
   if (!hidden) {
     el.innerHTML = '<span class="rk">' + label + '</span><span class="st">' + SUIT_SYM[suit] + '</span>';
   }
@@ -1295,7 +1937,7 @@ function cardNode(label, suit, hidden) {
 }
 
 /* ============================================================
-   7. BLACKJACK
+   8. BLACKJACK
    ============================================================ */
 const blackjack = {
   id: 'bj',
@@ -1487,7 +2129,7 @@ const blackjack = {
 };
 
 /* ============================================================
-   8. BIG TWO
+   9. BIG TWO
    ============================================================ */
 const bigTwo = (() => {
   const RANKS = r => r === 11 ? 'J' : r === 12 ? 'Q' : r === 13 ? 'K' : r === 14 ? 'A' : r === 15 ? '2' : String(r);
@@ -1762,9 +2404,1129 @@ const bigTwo = (() => {
 })();
 
 /* ============================================================
+   10. STICKMAN PARTY — five real-time duels, two players, one keyboard
+   ============================================================ */
+const stickParty = (() => {
+  const W = 720, H = 420;
+  const GOLD = '#ffcf5c', ICE = '#6ee7ff', HOT = '#ff5470', MAG = '#ff4fa3', INK = '#e9f2f6';
+  const MONO = 'ui-monospace,"SF Mono",Menlo,Consolas,monospace';
+  const SANS = '"Helvetica Neue",Helvetica,Arial,sans-serif';
+  const SERIF = '"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif';
+  const PL = [
+    { name: 'P1', color: GOLD, up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD',
+      all: ['KeyW', 'KeyA', 'KeyS', 'KeyD'] },
+    { name: 'P2', color: ICE, up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight',
+      all: ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'] }
+  ];
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+  const gap = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+  const ownerOf = code => (PL[0].all.indexOf(code) >= 0 ? 0 : PL[1].all.indexOf(code) >= 0 ? 1 : -1);
+
+  /* ---------- drawing ---------- */
+  function floor(c) {
+    c.save();
+    c.fillStyle = '#06080b';
+    c.fillRect(0, 0, W, H);
+    const g = c.createRadialGradient(W / 2, H * 0.04, 24, W / 2, H * 0.04, H * 1.2);
+    g.addColorStop(0, 'rgba(28,58,76,.6)');
+    g.addColorStop(0.55, 'rgba(12,20,28,.5)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = g;
+    c.fillRect(0, 0, W, H);
+    c.restore();
+  }
+
+  // neon bloom for one shape: wrap the draw in save()/restore()
+  function neon(c, color, blur) {
+    c.shadowColor = color;
+    c.shadowBlur = blur == null ? 14 : blur;
+  }
+
+  // arcade marquee lettering: uppercase, wide tracking, centred on x
+  function tracked(c, text, x, y, size, color, space, weight, family, blur) {
+    c.save();
+    c.font = (weight || '700') + ' ' + size + 'px ' + (family || SANS);
+    c.textBaseline = 'middle';
+    c.textAlign = 'left';
+    c.fillStyle = color;
+    if (blur) neon(c, color, blur);
+    const chars = String(text).split('');
+    const widths = chars.map(ch => c.measureText(ch).width);
+    let total = space * (chars.length - 1);
+    widths.forEach(w => { total += w; });
+    let cursor = x - total / 2;
+    chars.forEach((ch, i) => {
+      c.fillText(ch, cursor, y);
+      cursor += widths[i] + space;
+    });
+    c.restore();
+  }
+
+  // CRT: scanlines and a rounded vignette, always the last thing painted
+  function crt(c) {
+    c.save();
+    c.globalAlpha = 0.07;
+    c.fillStyle = '#000';
+    for (let y = 0; y < H; y += 3) c.fillRect(0, y, W, 1.4);
+    c.globalAlpha = 1;
+    const g = c.createRadialGradient(W / 2, H / 2, H * 0.32, W / 2, H / 2, H * 1.02);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(0,0,0,.6)');
+    c.fillStyle = g;
+    c.fillRect(0, 0, W, H);
+    c.restore();
+  }
+
+  function rr(c, x, y, w, h, r) {
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+
+  function shadow(c, x, y, rx) {
+    c.save();
+    c.globalAlpha = 0.32;
+    c.fillStyle = '#000';
+    c.beginPath();
+    c.ellipse(x, y, rx, rx * 0.32, 0, 0, 6.2832);
+    c.fill();
+    c.restore();
+  }
+
+  // x, y = feet centre; s = scale (1 ≈ 40px tall)
+  function man(c, x, y, s, color, o) {
+    const opt = o || {}, lean = opt.lean || 0, ph = opt.phase || 0;
+    const hip = y - 15 * s, shoulder = y - 30 * s, headY = y - 36 * s;
+    const lx = lean * 5 * s;
+    c.save();
+    c.globalAlpha = opt.alpha == null ? 1 : opt.alpha;
+    c.strokeStyle = color;
+    c.fillStyle = color;
+    c.lineWidth = Math.max(1.5, 3 * s);
+    c.lineCap = 'round';
+    c.lineJoin = 'round';
+    if (opt.glow !== false) neon(c, color, 10 * s);
+    c.beginPath();
+    c.moveTo(x + lx * 0.3, hip);
+    c.lineTo(x + lx, shoulder);
+    c.stroke();
+    c.beginPath();
+    c.arc(x + lx * 1.22, headY, 6.2 * s, 0, 6.2832);
+    c.fill();
+    const sw = Math.sin(ph) * 7 * s;
+    c.beginPath();
+    c.moveTo(x + lx, shoulder + s);
+    c.lineTo(x + lx + 9 * s, shoulder + 8 * s + sw);
+    c.moveTo(x + lx, shoulder + s);
+    c.lineTo(x + lx - 9 * s, shoulder + 8 * s - sw);
+    c.stroke();
+    const st = Math.sin(ph + 1.5708) * 7 * s;
+    c.beginPath();
+    c.moveTo(x + lx * 0.3, hip);
+    c.lineTo(x + 8 * s + st * 0.6, y);
+    c.moveTo(x + lx * 0.3, hip);
+    c.lineTo(x - 8 * s - st * 0.6, y);
+    c.stroke();
+    c.restore();
+  }
+
+  // a dim crowd along the top of the cabinet screen
+  function crowd(c, tick) {
+    const n = 9, span = W - 96;
+    for (let i = 0; i < n; i++) {
+      const x = 48 + i * (span / (n - 1));
+      const bob = Math.sin(tick * 2.1 + i * 1.7) * 2.4;
+      man(c, x, 52 + bob, 0.66, i % 2 ? ICE : GOLD,
+        { phase: tick * 3 + i * 1.3, glow: false, alpha: 0.16 + (i % 3) * 0.03 });
+    }
+  }
+
+  // soft stage light, for the sparse scenes
+  function spotlight(c, cx, spread, height) {
+    const g = c.createLinearGradient(0, 0, 0, height);
+    g.addColorStop(0, 'rgba(255,236,190,.14)');
+    g.addColorStop(0.65, 'rgba(255,236,190,.05)');
+    g.addColorStop(1, 'rgba(255,236,190,0)');
+    c.save();
+    c.fillStyle = g;
+    c.beginPath();
+    c.moveTo(cx - 46, 0);
+    c.lineTo(cx + 46, 0);
+    c.lineTo(cx + spread, height);
+    c.lineTo(cx - spread, height);
+    c.closePath();
+    c.fill();
+    c.restore();
+  }
+
+  function anvil(c, x, y, s, alpha) {
+    c.save();
+    c.globalAlpha = alpha == null ? 1 : alpha;
+    c.translate(x, y);
+    c.scale(s, s);
+    c.fillStyle = '#3d3531';
+    c.strokeStyle = '#776a5e';
+    c.lineWidth = 1.4;
+    c.beginPath();
+    c.moveTo(-13, -9); c.lineTo(13, -9); c.lineTo(10, -2); c.lineTo(6, -2);
+    c.lineTo(6, 9); c.lineTo(-6, 9); c.lineTo(-6, -2); c.lineTo(-10, -2);
+    c.closePath();
+    c.fill();
+    c.stroke();
+    c.beginPath();
+    c.arc(0, -11, 4, Math.PI, 0);
+    c.stroke();
+    c.restore();
+  }
+
+  // dir = +1 when the rope is to the right of the figure
+  function puller(c, x, y, dir, color, strain, phase) {
+    const back = -dir;
+    const lean = (8 + strain * 7) * back;
+    const wob = Math.sin(phase * 9) * strain * 1.8;
+    const hipX = x + lean * 0.45 + wob, hipY = y - 36;
+    const shX = x + lean + wob, shY = y - 74;
+    shadow(c, x, y, 20);
+    c.save();
+    c.strokeStyle = color;
+    c.fillStyle = color;
+    c.lineWidth = 4;
+    c.lineCap = 'round';
+    c.lineJoin = 'round';
+    neon(c, color, 12);
+    c.beginPath();
+    c.moveTo(hipX, hipY);
+    c.lineTo(shX, shY);
+    c.stroke();
+    c.beginPath();
+    c.arc(shX + back * 4, shY - 10, 7.4, 0, 6.2832);
+    c.fill();
+    c.beginPath();
+    c.moveTo(shX, shY + 5);
+    c.lineTo(shX + dir * 30, 302);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(hipX, hipY);
+    c.lineTo(x + back * 27, y);
+    c.moveTo(hipX, hipY);
+    c.lineTo(x + dir * 18, y);
+    c.stroke();
+    c.restore();
+  }
+
+  function veilFill(c, alpha) {
+    c.save();
+    c.fillStyle = 'rgba(9,8,7,' + alpha + ')';
+    c.fillRect(0, 0, W, H);
+    c.restore();
+  }
+
+  function introOverlay(c, roundNo, total, name, hint, tLeft) {
+    veilFill(c, 0.75);
+    const n = clamp(Math.ceil(tLeft / 0.8), 1, 3);
+    tracked(c, 'ROUND ' + roundNo + ' / ' + total, W / 2, 92, 14, MAG, 6, '700', MONO, 12);
+    tracked(c, String(n), W / 2, 208, 110, GOLD, 0, '700', SANS, 28);
+    tracked(c, name.toUpperCase(), W / 2, 300, 22, INK, 4, '700', SANS, 14);
+    tracked(c, hint, W / 2, 334, 12, '#a9bcc6', 1, '400', MONO);
+  }
+
+  function resultOverlay(c, who, note) {
+    veilFill(c, 0.7);
+    const col = who == null ? INK : PL[who].color;
+    tracked(c, who == null ? 'DRAW' : 'PLAYER ' + (who + 1), W / 2, 148, 15, col, 7, '700', MONO, 14);
+    tracked(c, who == null ? 'NO POINTS' : 'TAKES THE ROUND', W / 2, 206, 38, INK, 2, '800', SANS, 18);
+    if (note) tracked(c, String(note).toUpperCase(), W / 2, 266, 11, MAG, 2, '400', MONO, 8);
+  }
+
+  function pauseOverlay(c) {
+    veilFill(c, 0.74);
+    tracked(c, 'PAUSED', W / 2, H / 2 - 18, 44, GOLD, 4, '800', SANS, 22);
+    tracked(c, 'CLICK THE SCREEN TO RESUME', W / 2, H / 2 + 32, 11, '#9fb3bd', 2, '400', MONO);
+    tracked(c, 'ESC LEAVES THE CABINET', W / 2, H / 2 + 56, 10, '#6f8087', 2, '400', MONO);
+  }
+
+  function doneOverlay(c, scores, total, tick) {
+    veilFill(c, 0.74);
+    const who = scores[0] > scores[1] ? 0 : 1;
+    tracked(c, 'MATCH OVER', W / 2, 128, 15, MAG, 7, '700', MONO, 14);
+    tracked(c, 'PLAYER ' + (who + 1) + ' WINS', W / 2, 194, 40, PL[who].color, 2, '800', SANS, 22);
+    tracked(c, scores[0] + ' – ' + scores[1], W / 2, 250, 30, INK, 6, '700', MONO, 16);
+    tracked(c, 'BEST OF ' + total, W / 2, 284, 10, '#8fa3ad', 2, '400', MONO);
+    if (Math.floor(tick * 1.4) % 2 === 0) {
+      tracked(c, 'PRESS RESTART FOR ANOTHER MATCH', W / 2, 336, 10.5, GOLD, 2, '400', MONO, 8);
+    }
+  }
+
+  function idleScene(c, tick) {
+    floor(c);
+    const pulse = 0.5 + 0.5 * Math.sin(tick * 2.2);
+    c.save();
+    c.globalAlpha = 0.24 + pulse * 0.26;
+    c.strokeStyle = GOLD;
+    c.lineWidth = 1.5;
+    neon(c, GOLD, 20);
+    c.beginPath();
+    c.arc(W / 2, H / 2 + 6, 150, 0, 6.2832);
+    c.stroke();
+    c.restore();
+    c.save();
+    c.globalAlpha = 0.8;
+    man(c, 128, 372, 2.2, GOLD, { phase: tick * 4.2, lean: 0.35 });
+    man(c, 592, 372, 2.2, ICE, { phase: -tick * 4.2, lean: -0.35 });
+    c.restore();
+    tracked(c, '1 CREDIT', 78, 398, 9, '#6f8087', 2, '400', MONO);
+    tracked(c, '2 PLAYERS', W - 78, 398, 9, '#6f8087', 2, '400', MONO);
+  }
+
+  /* ---------- 1. ring out ---------- */
+  const RING = {
+    id: 'ring', name: 'Ring out',
+    hint: 'Shove your rival off the disc. The disc keeps shrinking.',
+    make(S) {
+      const CX = 360, CY = 218, PR = 19, LIMIT = 15;
+      const st = { t: 0, R: 158, cool: 0, bits: [] };
+      S.pl.forEach((p, i) => {
+        p.x = CX + (i ? 66 : -66); p.y = CY; p.vx = p.vy = 0;
+        p.alive = true; p.face = i ? Math.PI : 0; p.step = 0;
+      });
+      function move(p, i, dt) {
+        let ax = (S.held(i, 'right') ? 1 : 0) - (S.held(i, 'left') ? 1 : 0);
+        let ay = (S.held(i, 'down') ? 1 : 0) - (S.held(i, 'up') ? 1 : 0);
+        if (ax || ay) {
+          const m = Math.hypot(ax, ay);
+          ax /= m; ay /= m;
+          p.face = Math.atan2(ay, ax);
+        }
+        p.vx += ax * 780 * dt;
+        p.vy += ay * 780 * dt;
+        const f = Math.exp(-5.4 * dt);
+        p.vx *= f; p.vy *= f;
+        const sp = Math.hypot(p.vx, p.vy);
+        if (sp > 172) { p.vx = p.vx / sp * 172; p.vy = p.vy / sp * 172; }
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.step += sp * dt * 0.08;
+      }
+      return {
+        st,
+        update(dt) {
+          st.t += dt;
+          st.cool -= dt;
+          st.R = Math.max(112, 158 - st.t * 5.2);
+          S.pl.forEach((p, i) => { if (p.alive) move(p, i, dt); });
+          const a = S.pl[0], b = S.pl[1];
+          if (a.alive && b.alive) {
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const d = Math.hypot(dx, dy) || 0.0001;
+            if (d < PR * 2) {
+              const nx = dx / d, ny = dy / d;
+              const ov = PR * 2 - d;
+              a.x -= nx * ov * 0.5; a.y -= ny * ov * 0.5;
+              b.x += nx * ov * 0.5; b.y += ny * ov * 0.5;
+              const sep = (a.vx * nx + a.vy * ny) - (b.vx * nx + b.vy * ny);
+              if (sep > 0) {
+                const j = sep * 1.2;
+                a.vx -= nx * j * 0.5; a.vy -= ny * j * 0.5;
+                b.vx += nx * j * 0.5; b.vy += ny * j * 0.5;
+                if (st.cool <= 0) { Sound.chip(); st.cool = 0.22; }
+              }
+            }
+          }
+          S.pl.forEach(p => {
+            if (!p.alive) return;
+            if (gap(p.x, p.y, CX, CY) > st.R + 4) {
+              p.alive = false;
+              st.bits.push({ x: p.x, y: p.y, t: 0, c: p.color });
+              Sound.drop();
+            }
+          });
+          st.bits.forEach(bit => { bit.t += dt; });
+          st.bits = st.bits.filter(bit => bit.t < 0.6);
+          if (!a.alive || !b.alive) {
+            S.finish(!a.alive && !b.alive ? null : (a.alive ? 0 : 1), 'Off the disc');
+            return;
+          }
+          if (st.t > LIMIT) {
+            const da = gap(a.x, a.y, CX, CY), db = gap(b.x, b.y, CX, CY);
+            S.finish(Math.abs(da - db) < 8 ? null : (da < db ? 0 : 1), 'Closest to the middle');
+          }
+        },
+        draw(c) {
+          floor(c);
+          crowd(c, st.t);
+          c.save();
+          c.beginPath();
+          c.arc(CX, CY, st.R, 0, 6.2832);
+          const g = c.createRadialGradient(CX, CY - 50, 8, CX, CY, st.R);
+          g.addColorStop(0, '#132532');
+          g.addColorStop(0.68, '#0b1620');
+          g.addColorStop(1, '#070d14');
+          c.fillStyle = g;
+          c.fill();
+          c.strokeStyle = GOLD;
+          c.lineWidth = 2.5;
+          neon(c, GOLD, 18);
+          c.stroke();
+          c.shadowBlur = 0;
+          c.setLineDash([6, 10]);
+          c.lineWidth = 1;
+          c.strokeStyle = 'rgba(110,231,255,.22)';
+          c.beginPath();
+          c.arc(CX, CY, Math.max(20, st.R * 0.55), 0, 6.2832);
+          c.stroke();
+          c.restore();
+          const frac = clamp(st.t / LIMIT, 0, 1);
+          c.save();
+          c.lineWidth = 3.5;
+          c.strokeStyle = frac > 0.72 ? MAG : GOLD;
+          neon(c, frac > 0.72 ? MAG : GOLD, 12);
+          c.beginPath();
+          c.arc(CX, CY, st.R + 13, -1.5708, -1.5708 + 6.2832 * (1 - frac));
+          c.stroke();
+          c.restore();
+          st.bits.forEach(bit => {
+            c.save();
+            c.globalAlpha = Math.max(0, 1 - bit.t / 0.6);
+            c.strokeStyle = bit.c;
+            c.lineWidth = 2;
+            neon(c, bit.c, 10);
+            c.beginPath();
+            c.arc(bit.x, bit.y, 10 + bit.t * 60, 0, 6.2832);
+            c.stroke();
+            c.restore();
+          });
+          S.pl.forEach((p, i) => {
+            if (!p.alive) return;
+            shadow(c, p.x, p.y + 17, 16);
+            man(c, p.x, p.y + 17, 1.2, p.color, { phase: p.step });
+            tracked(c, PL[i].name, p.x, p.y - 36, 11, p.color, 2, '700', MONO, 8);
+          });
+        }
+      };
+    }
+  };
+
+  /* ---------- 2. anvils ---------- */
+  const RAIN = {
+    id: 'rain', name: 'Anvils',
+    hint: 'The shadow is where an anvil lands. Last stickman standing takes it.',
+    make(S) {
+      const B = { x: 44, y: 70, w: 632, h: 314 };
+      const st = { t: 0, next: 0.85, drops: [], hits: [] };
+      S.pl.forEach((p, i) => {
+        p.x = 360 + (i ? 190 : -190); p.y = B.y + 120;
+        p.vx = p.vy = 0; p.alive = true; p.step = 0;
+      });
+      function move(p, i, dt) {
+        const tx = ((S.held(i, 'right') ? 1 : 0) - (S.held(i, 'left') ? 1 : 0)) * 196;
+        const ty = ((S.held(i, 'down') ? 1 : 0) - (S.held(i, 'up') ? 1 : 0)) * 196;
+        const k = Math.min(1, dt * 15);
+        p.vx += (tx - p.vx) * k;
+        p.vy += (ty - p.vy) * k;
+        p.x = clamp(p.x + p.vx * dt, B.x + 14, B.x + B.w - 14);
+        p.y = clamp(p.y + p.vy * dt, B.y + 14, B.y + B.h - 14);
+        p.step += Math.hypot(p.vx, p.vy) * dt * 0.1;
+      }
+      function spawn() {
+        const alive = S.pl.filter(p => p.alive);
+        let x, y;
+        if (alive.length && Math.random() < 0.75) {
+          const p = pick(alive);
+          x = clamp(p.x + p.vx * 0.2 + (Math.random() * 76 - 38), B.x + 26, B.x + B.w - 26);
+          y = clamp(p.y + p.vy * 0.2 + (Math.random() * 76 - 38), B.y + 26, B.y + B.h - 26);
+        } else {
+          x = B.x + 40 + Math.random() * (B.w - 80);
+          y = B.y + 40 + Math.random() * (B.h - 80);
+        }
+        st.drops.push({ x, y, t: 0, warn: 0.6, fall: 0.18, r: 32, done: false });
+      }
+      return {
+        st, B,
+        update(dt) {
+          st.t += dt;
+          S.pl.forEach((p, i) => { if (p.alive) move(p, i, dt); });
+          st.next -= dt;
+          if (st.next <= 0) {
+            spawn();
+            st.next = Math.max(0.3, 1.15 - st.t * 0.055);
+          }
+          st.drops.forEach(d => {
+            d.t += dt;
+            if (d.done || d.t < d.warn + d.fall) return;
+            d.done = true;
+            S.pl.forEach(p => {
+              if (!p.alive) return;
+              if (gap(p.x, p.y, d.x, d.y) < d.r) {
+                p.alive = false;
+                st.hits.push({ x: p.x, y: p.y, t: 0 });
+                Sound.capture();
+              }
+            });
+          });
+          st.hits.forEach(h => { h.t += dt; });
+          st.hits = st.hits.filter(h => h.t < 0.5);
+          st.drops = st.drops.filter(d => d.t < d.warn + d.fall + 0.5);
+          const alive = S.pl.filter(p => p.alive);
+          if (alive.length < 2) {
+            S.finish(alive.length === 1 ? S.pl.indexOf(alive[0]) : null,
+              alive.length === 1 ? 'Last stickman standing' : 'Both flattened');
+            return;
+          }
+          if (st.t > 16) S.finish(null, 'Both survived the shower');
+        },
+        draw(c) {
+          floor(c);
+          crowd(c, st.t);
+          c.save();
+          c.fillStyle = '#0a141b';
+          rr(c, B.x, B.y, B.w, B.h, 12);
+          c.fill();
+          c.strokeStyle = 'rgba(110,231,255,.4)';
+          c.lineWidth = 1.5;
+          neon(c, ICE, 12);
+          c.stroke();
+          c.shadowBlur = 0;
+          c.strokeStyle = 'rgba(110,231,255,.07)';
+          c.lineWidth = 1;
+          rr(c, B.x + 7, B.y + 7, B.w - 14, B.h - 14, 9);
+          c.stroke();
+          c.fillStyle = 'rgba(255,255,255,.04)';
+          for (let x = B.x + 34; x < B.x + B.w; x += 72) {
+            for (let y = B.y + 34; y < B.y + B.h; y += 72) {
+              c.beginPath();
+              c.arc(x, y, 1.6, 0, 6.2832);
+              c.fill();
+            }
+          }
+          c.restore();
+          st.drops.forEach(d => {
+            if (!d.done) {
+              const p = clamp(d.t / d.warn, 0, 1);
+              c.save();
+              c.beginPath();
+              c.arc(d.x, d.y, d.r, 0, 6.2832);
+              c.fillStyle = 'rgba(255,84,112,' + (0.06 + p * 0.18) + ')';
+              c.fill();
+              c.strokeStyle = 'rgba(255,84,112,' + (0.4 + p * 0.55) + ')';
+              c.lineWidth = 1.8;
+              neon(c, HOT, 8 + p * 10);
+              c.stroke();
+              c.restore();
+              if (d.t > d.warn) {
+                const f = (d.t - d.warn) / d.fall;
+                anvil(c, d.x, d.y - 240 * (1 - f), 0.85 + f * 0.55, 1);
+              }
+            } else {
+              const f = clamp((d.t - d.warn - d.fall) / 0.5, 0, 1);
+              c.save();
+              c.globalAlpha = 1 - f;
+              c.strokeStyle = HOT;
+              c.lineWidth = 2;
+              c.beginPath();
+              c.arc(d.x, d.y, d.r + f * 28, 0, 6.2832);
+              c.stroke();
+              c.restore();
+            }
+          });
+          st.hits.forEach(h => {
+            c.save();
+            c.globalAlpha = Math.max(0, 1 - h.t / 0.5);
+            c.strokeStyle = HOT;
+            c.lineWidth = 2;
+            c.beginPath();
+            c.arc(h.x, h.y, 12 + h.t * 70, 0, 6.2832);
+            c.stroke();
+            c.restore();
+          });
+          S.pl.forEach((p, i) => {
+            if (!p.alive) {
+              tracked(c, PL[i].name + ' OUT', p.x, p.y - 8, 10, '#6f8087', 2, '700', MONO, 6);
+              return;
+            }
+            shadow(c, p.x, p.y, 16);
+            man(c, p.x, p.y, 1.15, p.color, { phase: p.step });
+            tracked(c, PL[i].name, p.x, p.y - 50, 11, p.color, 2, '700', MONO, 8);
+          });
+        }
+      };
+    }
+  };
+
+  /* ---------- 3. the run ---------- */
+  const RACE = {
+    id: 'race', name: 'The run',
+    hint: 'Left and right to dodge the barriers. First to the line wins.',
+    make(S) {
+      const GOAL = 2600, SPEED = 168, OBS = 300, TOP = 92, BOT = 380;
+      const tracks = [0, 1].map(i => ({
+        x: i ? 380 : 30, w: 310, obs: [], next: 0.55 + i * 0.26, dist: 0, stun: 0
+      }));
+      const laneX = (tr, lane) => tr.x + tr.w * [0.18, 0.5, 0.82][lane];
+      S.pl.forEach((p, i) => {
+        p.x = tracks[i].x + tracks[i].w / 2;
+        p.y = 352; p.alive = true; p.hit = 0; p.step = 0;
+      });
+      function step(i, dt) {
+        const tr = tracks[i], p = S.pl[i];
+        const dir = (S.held(i, 'right') ? 1 : 0) - (S.held(i, 'left') ? 1 : 0);
+        p.x = clamp(p.x + dir * (tr.stun > 0 ? 92 : 232) * dt, tr.x + 18, tr.x + tr.w - 18);
+        p.step += Math.abs(dir) * dt * 9;
+        if (tr.stun > 0) tr.stun -= dt; else tr.dist += SPEED * dt;
+        if (p.hit > 0) p.hit -= dt;
+        tr.next -= dt;
+        if (tr.next <= 0) {
+          const order = [0, 1, 2].sort(() => Math.random() - 0.5);
+          const n = Math.random() < 0.34 ? 2 : 1;
+          for (let k = 0; k < n; k++) {
+            tr.obs.push({ cx: laneX(tr, order[k]), y: TOP - 6, w: tr.w * 0.24 });
+          }
+          tr.next = Math.max(0.36, 0.68 - tr.dist / GOAL * 0.26);
+        }
+        tr.obs.forEach(o => { o.y += OBS * dt; });
+        if (tr.stun <= 0 && p.hit <= 0) {
+          for (const o of tr.obs) {
+            if (Math.abs(o.y - p.y) < 15 && Math.abs(o.cx - p.x) < o.w / 2 + 9) {
+              tr.stun = 0.72;
+              tr.dist = Math.max(0, tr.dist - 90);
+              p.hit = 1.1;
+              p.x = clamp(p.x + (p.x < o.cx ? -26 : 26), tr.x + 18, tr.x + tr.w - 18);
+              Sound.capture();
+              break;
+            }
+          }
+        }
+        tr.obs = tr.obs.filter(o => o.y < BOT + 40);
+      }
+      return {
+        st: tracks, GOAL, TOP, BOT,
+        update(dt) {
+          step(0, dt);
+          step(1, dt);
+          const done = [0, 1].filter(i => tracks[i].dist >= GOAL);
+          if (done.length) {
+            S.finish(done.length === 2 ? null : done[0], done.length === 2 ? 'Photo finish' : 'First to the line');
+          }
+        },
+        draw(c) {
+          floor(c);
+          crowd(c, (tracks[0].dist + tracks[1].dist) * 0.012);
+          tracks.forEach((tr, i) => {
+            const p = S.pl[i];
+            const w = tr.w, h = BOT - TOP;
+            c.save();
+            c.fillStyle = '#0a141b';
+            rr(c, tr.x, TOP, w, h, 10);
+            c.fill();
+            c.strokeStyle = 'rgba(110,231,255,.35)';
+            c.lineWidth = 1.5;
+            neon(c, ICE, 10);
+            c.stroke();
+            c.shadowBlur = 0;
+            c.strokeStyle = 'rgba(110,231,255,.16)';
+            c.setLineDash([12, 20]);
+            c.lineWidth = 1;
+            [0.34, 0.66].forEach(f => {
+              c.beginPath();
+              c.moveTo(tr.x + w * f, TOP);
+              c.lineTo(tr.x + w * f, BOT);
+              c.stroke();
+            });
+            c.setLineDash([]);
+            c.strokeStyle = 'rgba(255,255,255,.07)';
+            const off = tr.dist % 56;
+            for (let k = 0; k * 56 < h; k++) {
+              const y = TOP + ((off + k * 56) % h);
+              c.beginPath();
+              c.moveTo(tr.x + 8, y);
+              c.lineTo(tr.x + w - 8, y);
+              c.stroke();
+            }
+            c.fillStyle = 'rgba(255,207,92,.75)';
+            for (let k = 0; k < 10; k += 2) c.fillRect(tr.x + k * w / 10, TOP, w / 10, 5);
+            tr.obs.forEach(o => {
+              if (o.y < TOP || o.y > BOT) return;
+              c.save();
+              c.fillStyle = HOT;
+              neon(c, HOT, 9);
+              rr(c, o.cx - o.w / 2, o.y - 8, o.w, 16, 4);
+              c.fill();
+              c.shadowBlur = 0;
+              c.fillStyle = 'rgba(0,0,0,.35)';
+              for (let k = 1; k < 4; k++) {
+                c.fillRect(o.cx - o.w / 2 + k * o.w / 4, o.y - 6, 3, 12);
+              }
+              c.restore();
+            });
+            const blink = p.hit > 0 && Math.floor(p.hit * 12) % 2 === 0;
+            if (!blink) {
+              shadow(c, p.x, p.y, 15);
+              man(c, p.x, p.y, 1.15, p.color, { phase: p.step, alpha: tr.stun > 0 ? 0.5 : 1 });
+            }
+            c.save();
+            c.fillStyle = 'rgba(6,9,12,.74)';
+            rr(c, tr.x + w / 2 - 48, TOP + 9, 96, 24, 12);
+            c.fill();
+            c.strokeStyle = 'rgba(110,231,255,.18)';
+            c.lineWidth = 1;
+            c.stroke();
+            c.restore();
+            tracked(c, PL[i].name + '  ' + Math.round(clamp(tr.dist / GOAL, 0, 1) * 100) + '%',
+              tr.x + w / 2, TOP + 21, 12, tr.stun > 0 ? HOT : p.color, 1.5, '700', MONO, 7);
+            c.restore();
+          });
+        }
+      };
+    }
+  };
+
+  /* ---------- 4. tug of war ---------- */
+  const TUG = {
+    id: 'tug', name: 'Tug of war',
+    hint: 'Mash any of your four keys. Drag the knot past your marker.',
+    make(S) {
+      const MID = 360, LIMIT = 250, LEFT = MID - LIMIT, RIGHT = MID + LIMIT;
+      const st = { knot: MID, t: 0, lean: [0, 0] };
+      S.pl.forEach(p => { p.alive = true; });
+      return {
+        st,
+        key(code, who) {
+          // the knot moves toward whoever is mashing: P1 is on the left
+          st.knot += who === 0 ? -6.5 : 6.5;
+          st.lean[who] = Math.min(1, st.lean[who] + 0.45);
+          Sound.chip();
+        },
+        update(dt) {
+          st.t += dt;
+          st.knot += (MID - st.knot) * 0.11 * dt;
+          st.knot = clamp(st.knot, LEFT - 30, RIGHT + 30);
+          st.lean[0] = Math.max(0, st.lean[0] - dt * 1.5);
+          st.lean[1] = Math.max(0, st.lean[1] - dt * 1.5);
+          if (st.knot <= LEFT) return S.finish(0, 'Hauled past the marker');
+          if (st.knot >= RIGHT) return S.finish(1, 'Hauled past the marker');
+          if (st.t > 16) {
+            const d = st.knot - MID;
+            S.finish(Math.abs(d) < 10 ? null : (d < 0 ? 0 : 1), 'The rope ran out of time');
+          }
+        },
+        draw(c) {
+          floor(c);
+          spotlight(c, 360, 340, 400);
+          crowd(c, st.t);
+          c.save();
+          c.strokeStyle = 'rgba(110,231,255,.14)';
+          c.lineWidth = 1;
+          c.beginPath();
+          c.moveTo(36, 344);
+          c.lineTo(684, 344);
+          c.stroke();
+          [LEFT, RIGHT].forEach((mx, i) => {
+            c.save();
+            c.setLineDash([5, 7]);
+            c.strokeStyle = i ? ICE : GOLD;
+            c.lineWidth = 1.6;
+            neon(c, i ? ICE : GOLD, 10);
+            c.beginPath();
+            c.moveTo(mx, 238);
+            c.lineTo(mx, 352);
+            c.stroke();
+            c.restore();
+          });
+          c.strokeStyle = '#9a8768';
+          c.lineWidth = 3.5;
+          neon(c, '#c9a76a', 8);
+          c.beginPath();
+          c.moveTo(150, 302);
+          c.lineTo(570, 302);
+          c.stroke();
+          c.shadowBlur = 0;
+          c.strokeStyle = 'rgba(0,0,0,.45)';
+          c.lineWidth = 1;
+          for (let x = 156; x < 566; x += 9) {
+            c.beginPath();
+            c.moveTo(x, 298);
+            c.lineTo(x + 5, 306);
+            c.stroke();
+          }
+          c.restore();
+          puller(c, 150, 340, 1, GOLD, st.lean[0], st.t);
+          puller(c, 570, 340, -1, ICE, st.lean[1], st.t + 1.4);
+          tracked(c, 'P1', 150, 370, 12, GOLD, 2, '700', MONO, 8);
+          tracked(c, 'P2', 570, 370, 12, ICE, 2, '700', MONO, 8);
+          c.save();
+          c.fillStyle = GOLD;
+          neon(c, GOLD, 14);
+          c.fillRect(st.knot - 1.5, 262, 3, 40);
+          c.beginPath();
+          c.moveTo(st.knot + 2, 262);
+          c.lineTo(st.knot + 22, 269);
+          c.lineTo(st.knot + 2, 276);
+          c.fill();
+          c.beginPath();
+          c.arc(st.knot, 302, 7, 0, 6.2832);
+          c.fill();
+          c.restore();
+        }
+      };
+    }
+  };
+
+  /* ---------- 5. quick draw ---------- */
+  const DRAW = {
+    id: 'draw', name: 'Quick draw',
+    hint: 'Too soon and you lose. First key after the flare takes it.',
+    make(S) {
+      const st = { t: 0, at: 1.4 + Math.random() * 1.9, lit: false, litAt: 0, early: null, over: false, winner: null };
+      S.pl.forEach(p => { p.alive = true; p.step = 0; });
+      return {
+        st,
+        key(code, who) {
+          if (st.over) return;
+          if (!st.lit) {
+            st.early = who;
+            st.over = true;
+            Sound.lose();
+            S.finish(who === 0 ? 1 : 0, PL[who].name + ' drew too early');
+            return;
+          }
+          st.over = true;
+          st.winner = who;
+          Sound.win();
+          S.finish(who, PL[who].name + ' was quicker');
+        },
+        update(dt) {
+          st.t += dt;
+          if (!st.lit && st.t >= st.at) {
+            st.lit = true;
+            st.litAt = st.t;
+            Sound.flip();
+          }
+          if (st.lit && !st.over && st.t - st.litAt > 2.6) {
+            st.over = true;
+            S.finish(null, 'Nobody moved');
+          }
+        },
+        draw(c) {
+          floor(c);
+          crowd(c, st.t);
+          const lx = 360, ly = 168;
+          if (st.lit) {
+            const g = c.createRadialGradient(lx, ly, 6, lx, ly, 230);
+            g.addColorStop(0, 'rgba(255,246,214,.55)');
+            g.addColorStop(0.45, 'rgba(255,207,92,.22)');
+            g.addColorStop(1, 'rgba(255,207,92,0)');
+            c.fillStyle = g;
+            c.fillRect(0, 0, W, H);
+          }
+          c.save();
+          if (st.lit) neon(c, '#fff2c8', 26);
+          c.fillStyle = st.lit ? '#fff6d6' : 'rgba(110,231,255,.06)';
+          c.strokeStyle = st.lit ? '#fff2c8' : 'rgba(110,231,255,.45)';
+          c.lineWidth = 2;
+          c.fillRect(lx - 17, ly - 22, 34, 44);
+          c.strokeRect(lx - 17, ly - 22, 34, 44);
+          c.beginPath();
+          c.moveTo(lx, ly - 22);
+          c.lineTo(lx, ly - 42);
+          c.stroke();
+          c.restore();
+          c.save();
+          c.strokeStyle = 'rgba(110,231,255,.22)';
+          c.lineWidth = 1.5;
+          c.setLineDash([8, 8]);
+          c.beginPath();
+          c.moveTo(60, 352);
+          c.lineTo(660, 352);
+          c.stroke();
+          c.restore();
+          shadow(c, 250, 340, 20);
+          shadow(c, 470, 340, 20);
+          man(c, 250, 340, 1.5, GOLD, { lean: 0.5, phase: 0 });
+          man(c, 470, 340, 1.5, ICE, { lean: -0.5, phase: 0 });
+          tracked(c, 'P1', 250, 372, 12, GOLD, 2, '700', MONO, 8);
+          tracked(c, 'P2', 470, 372, 12, ICE, 2, '700', MONO, 8);
+          if (st.lit && !st.over) tracked(c, 'DRAW!', lx, 250, 32, MAG, 5, '800', SANS, 22);
+          if (st.early != null) {
+            tracked(c, 'EARLY', st.early === 0 ? 250 : 470, 292, 16, HOT, 4, '800', SANS, 16);
+          }
+        }
+      };
+    }
+  };
+
+  const GAME_LIST = [RING, RAIN, RACE, TUG, DRAW];
+
+  /* ---------- the match ---------- */
+  function mount(ctx) {
+    const held = Object.create(null);
+    let fresh = [];
+    let phase = 'idle', mg = null, inst = null;
+    let rounds = [], roundIx = -1, scores = [0, 0];
+    let introT = 0, resultT = 0, lastWinner = null, lastNote = '';
+    let paused = false, stopped = false, raf = 0, last = 0, tick = 0;
+
+    const pl = [
+      { x: 0, y: 0, vx: 0, vy: 0, alive: true, color: GOLD, face: 0, step: 0, hit: 0 },
+      { x: 0, y: 0, vx: 0, vy: 0, alive: true, color: ICE, face: Math.PI, step: 0, hit: 0 }
+    ];
+    const S = {
+      pl, W, H,
+      held: (i, dir) => !!held[PL[i][dir]],
+      finish(who, note) { roundOver(who, note); }
+    };
+
+    const wrap = mk('div', 'sp');
+    const hud = mk('div', 'sp-hud');
+    hud.innerHTML = '<span class="sp-p1"><b>0</b> P1</span>' +
+      '<span class="sp-mid">stickman party</span>' +
+      '<span class="sp-p2">P2 <b>0</b></span>';
+    const p1num = $('.sp-p1 b', hud);
+    const p2num = $('.sp-p2 b', hud);
+    const mid = $('.sp-mid', hud);
+    const stage = mk('div', 'sp-stage');
+    const canvas = mk('canvas', 'sp-canvas');
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.setAttribute('aria-label', 'Stickman Party arena');
+    const c = canvas.getContext('2d');
+    const keys = mk('div', 'sp-keys');
+    keys.innerHTML = '<span class="sp-p1">P1</span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>' +
+      '<span class="sp-p2">P2</span><kbd>&uarr;</kbd><kbd>&larr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd>';
+    const restart = mk('button', 'btn small sp-restart', 'Restart');
+    restart.type = 'button';
+    restart.addEventListener('click', () => {
+      Sound.click();
+      restart.blur();
+      startMatch();
+    });
+    keys.appendChild(restart);
+    stage.appendChild(canvas);
+    wrap.appendChild(hud);
+    wrap.appendChild(stage);
+    wrap.appendChild(keys);
+    ctx.boardEl.appendChild(wrap);
+
+    const veil = mk('div', 'sp-veil');
+    const cardEl = mk('div', 'sp-card');
+    cardEl.innerHTML = '<h4>Stickman Party</h4>' +
+      '<p>Five quick duels, best of five. P1 has <b>WASD</b>, P2 has the arrow keys — ' +
+      'no turn waiting, just reflexes.</p>';
+    const startBtn = mk('button', 'btn primary', 'Press start');
+    startBtn.type = 'button';
+    cardEl.appendChild(startBtn);
+    veil.appendChild(cardEl);
+    stage.appendChild(veil);
+
+    function shuffle(a) {
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = rnd(i + 1);
+        const t = a[i];
+        a[i] = a[j];
+        a[j] = t;
+      }
+      return a;
+    }
+
+    function paintHud() {
+      p1num.textContent = scores[0];
+      p2num.textContent = scores[1];
+      mid.textContent = roundIx < 0
+        ? 'two players · one keyboard'
+        : ('round ' + Math.min(roundIx + 1, rounds.length) + ' / ' + rounds.length + ' · ' + mg.name);
+    }
+
+    function startMatch() {
+      scores = [0, 0];
+      rounds = shuffle(GAME_LIST.slice());
+      roundIx = -1;
+      lastWinner = null;
+      lastNote = '';
+      paused = false;
+      veil.style.display = 'none';
+      ctx.clearBanner();
+      nextRound();
+    }
+
+    function nextRound() {
+      roundIx++;
+      if (roundIx >= rounds.length) {
+        if (scores[0] === scores[1]) rounds.push(pick(GAME_LIST));
+        else return finishMatch();
+      }
+      mg = rounds[roundIx];
+      inst = mg.make(S);
+      phase = 'intro';
+      introT = 2.4;
+      paintHud();
+      ctx.setStatus('Round ' + (roundIx + 1) + ' · ' + mg.name, 'you');
+    }
+
+    function roundOver(who, note) {
+      if (phase !== 'play') return;
+      phase = 'result';
+      resultT = 1.8;
+      lastWinner = who;
+      lastNote = note || '';
+      if (who === 0 || who === 1) {
+        scores[who]++;
+        Sound.win();
+      } else Sound.draw();
+      paintHud();
+      ctx.setStatus(who == null ? 'Round drawn' : PL[who].name + ' takes round ' + (roundIx + 1), 'you');
+    }
+
+    function finishMatch() {
+      phase = 'done';
+      const a = scores[0], b = scores[1];
+      const who = a > b ? 0 : 1;
+      paintHud();
+      ctx.setStatus(PL[who].name + ' wins the match', who === 0 ? 'win' : 'you');
+      Sound.win();
+      ctx.end(null, PL[who].name + ' takes the match ' + Math.max(a, b) + '–' + Math.min(a, b) +
+        ' over ' + rounds.length + ' rounds');
+    }
+
+    function paint() {
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c.clearRect(0, 0, W, H);
+      if (inst && phase !== 'idle') inst.draw(c);
+      else idleScene(c, tick);
+      if (phase === 'intro') introOverlay(c, roundIx + 1, rounds.length, mg.name, mg.hint, introT);
+      else if (phase === 'result') resultOverlay(c, lastWinner, lastNote);
+      else if (phase === 'done') doneOverlay(c, scores, rounds.length, tick);
+      if (paused) pauseOverlay(c);
+      crt(c);
+    }
+
+    function advance(dt) {
+      tick += dt;
+      if (paused) {
+        fresh = [];
+      } else if (phase === 'intro') {
+        introT -= dt;
+        if (introT <= 0) phase = 'play';
+      } else if (phase === 'play') {
+        const q = fresh;
+        fresh = [];
+        if (inst.key) q.forEach(k => inst.key(k.code, k.who));
+        if (phase === 'play') inst.update(dt);
+      } else if (phase === 'result') {
+        resultT -= dt;
+        if (resultT <= 0) nextRound();
+      }
+      paint();
+    }
+
+    function frame(ts) {
+      if (stopped) return;
+      raf = requestAnimationFrame(frame);
+      if (!canvas.isConnected || !ctx.alive()) { stop(); return; }
+      const dt = last ? Math.min(0.034, Math.max(0, (ts - last) / 1000)) : 0.016;
+      last = ts;
+      advance(dt);
+    }
+
+    function stop() {
+      if (stopped) return;
+      stopped = true;
+      cancelAnimationFrame(raf);
+      document.removeEventListener('keydown', onDown);
+      document.removeEventListener('keyup', onUp);
+      window.removeEventListener('blur', onBlur);
+      if (window.__nxParty && window.__nxParty.pl === pl) delete window.__nxParty;
+    }
+
+    function onDown(e) {
+      if (stopped) return;
+      if (!canvas.isConnected || !ctx.alive()) { stop(); return; }
+      const who = ownerOf(e.code);
+      if (who < 0) return;
+      if (e.code.indexOf('Arrow') === 0) e.preventDefault();
+      if (phase === 'idle' || phase === 'done' || paused) return;
+      held[e.code] = true;
+      if (!e.repeat && phase === 'play') fresh.push({ code: e.code, who });
+    }
+
+    function onUp(e) {
+      if (ownerOf(e.code) >= 0) held[e.code] = false;
+    }
+
+    function onBlur() {
+      if (!stopped && (phase === 'play' || phase === 'intro')) paused = true;
+      for (const k in held) held[k] = false;
+      fresh = [];
+    }
+
+    startBtn.addEventListener('click', () => {
+      Sound.click();
+      startBtn.blur();
+      startMatch();
+    });
+    stage.addEventListener('click', () => {
+      if (paused) {
+        paused = false;
+        last = performance.now();
+      }
+    });
+
+    document.addEventListener('keydown', onDown);
+    document.addEventListener('keyup', onUp);
+    window.addEventListener('blur', onBlur);
+
+    window.__nxParty = {
+      get phase() { return phase; },
+      get paused() { return paused; },
+      get round() { return roundIx; },
+      get rounds() { return rounds.map(r => r.id); },
+      get scores() { return scores.slice(); },
+      get mm() { return mg ? mg.id : null; },
+      get note() { return lastNote; },
+      pl,
+      inst: () => inst,
+      // test hook: advance the match by hand, so a throttled/occluded WebView
+      // (rAF stopped) still runs at exactly the pace the test expects
+      step(ms) { if (!stopped) advance((ms || 16) / 1000); },
+      start(ids) {
+        rounds = ids.map(id => GAME_LIST.filter(g => g.id === id)[0]).filter(Boolean);
+        roundIx = -1;
+        scores = [0, 0];
+        veil.style.display = 'none';
+        phase = 'idle';
+        ctx.clearBanner();
+        nextRound();
+      },
+      skip() { if (phase === 'intro') introT = 0.001; }
+    };
+
+    paintHud();
+    ctx.setStatus('Stickman Party — press start', 'you');
+    raf = requestAnimationFrame(frame);
+    return {};
+  }
+
+  return {
+    id: 'sp',
+    name: 'Stickman Party',
+    tag: 'two players, one keyboard',
+    blurb: 'Five real-time duels — shove, dodge, run, pull, draw. Same keyboard, no internet.',
+    rules: 'Best of five duels in shuffled order: Ring out, Anvils, The run, ' +
+      'Tug of war and Quick draw. P1 uses W A S D, P2 uses the arrow keys. ' +
+      'Most round wins takes the match; a tie gets one more round. Nothing here waits its turn, ' +
+      'so both pairs of hands stay on the keyboard.',
+    hideMode: true,
+    hideDiff: true,
+    mount
+  };
+})();
+
+/* ============================================================
    shell
    ============================================================ */
-const GAMES = [ticTacToe, connectFour, reversi, checkers, gomoku, mancala, blackjack, bigTwo];
+const GAMES = [ticTacToe, connectFour, reversi, checkers, chess, gomoku, mancala, blackjack, bigTwo, stickParty];
 const screenEl = $('#screen');
 const muteBtn = $('#mute');
 const backBtn = $('#back');
@@ -1794,7 +3556,7 @@ function hub() {
   document.body.dataset.view = 'hub';
   const wrap = mk('section', 'hub');
   const h1 = mk('h1');
-  h1.innerHTML = 'Eight games, no internet,<br><em>one turn at a time.</em>';
+  h1.innerHTML = 'Ten games, no internet,<br><em>pass the keyboard.</em>';
   const sub = mk('p', 'sub');
   sub.innerHTML = 'Everything here runs offline, in one folder. Pull up a second player on the same keyboard, or take on Talia — she has three moods: Easy, Steady and Ruthless.';
   wrap.appendChild(h1); wrap.appendChild(sub);
