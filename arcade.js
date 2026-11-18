@@ -531,6 +531,15 @@ const reversi = (() => {
       const mode = ctx.mode, diff = ctx.diff, HUMAN = 1;
       let b = new Int8Array(N), turn = HUMAN, over = false, hist = [], legalSet = new Set();
       b[27] = -1; b[28] = 1; b[35] = 1; b[36] = -1;
+      /* Threefold repetition: same discs, same side to move, three times = draw. */
+      const rep = new Map();
+      const posKey = (bd, side) => bd.join(',') + '|' + side;
+      const bumpRep = (bd, side) => {
+        const k = posKey(bd, side), n = (rep.get(k) || 0) + 1;
+        rep.set(k, n);
+        return n;
+      };
+      bumpRep(b, turn);
       const board = mk('div', 'board rv');
       ctx.boardEl.appendChild(board);
       const cells = [];
@@ -582,6 +591,12 @@ const reversi = (() => {
         } else if (p > n) { ctx.setStatus('You win · ' + label, 'win'); Sound.win(); ctx.end('w', 'You win — ' + label); }
         else { ctx.setStatus('Talia wins · ' + label, 'lose'); Sound.lose(); ctx.end('l', 'Talia wins — ' + label); }
       }
+      function finishRepeat() {
+        over = true; legalSet = new Set(); render();
+        const { p, n } = score();
+        ctx.setStatus('Draw', 'draw'); Sound.draw();
+        ctx.end('d', `Draw — threefold repetition (${p}–${n})`);
+      }
       function play(i) {
         if (over || !humanTurn()) return;
         const mv = legal(b, turn).find(m => m.i === i);
@@ -599,6 +614,7 @@ const reversi = (() => {
         if (legal(b, next).length) turn = next;
         else if (legal(b, turn).length) { passed = true; Sound.pass(); }
         else return finish();
+        if (bumpRep(b, turn) >= 3) return finishRepeat();
         refreshLegal(); render(changed); sync();
         if (passed) ctx.flash((mode === 'two' ? (next === 1 ? 'Cream' : 'Slate') : 'Talia') + ' has no legal move — pass');
         if (mode === 'ai' && turn === -1) think();
@@ -624,6 +640,7 @@ const reversi = (() => {
         let s = hist.pop();
         while (mode === 'ai' && s.turn !== HUMAN && hist.length) s = hist.pop();
         b = Int8Array.from(s.b); turn = s.turn;
+        rep.clear(); for (const h of hist) bumpRep(h.b, h.turn); bumpRep(b, turn);
         refreshLegal(); render(); sync();
       }
       function hint() {
@@ -763,8 +780,17 @@ const checkers = (() => {
     mount(ctx) {
       const mode = ctx.mode, diff = ctx.diff, HUMAN = 1;
       let b = new Int8Array(64), turn = HUMAN, over = false, hist = [], sel = null;
+      /* Threefold repetition: same men, same side to move, three times = draw. */
+      const rep = new Map();
+      const posKey = (bd, side) => bd.join(',') + '|' + side;
+      const bumpRep = (bd, side) => {
+        const k = posKey(bd, side), n = (rep.get(k) || 0) + 1;
+        rep.set(k, n);
+        return n;
+      };
       for (let r = 0; r < 3; r++) for (let c = 0; c < 8; c++) if ((r + c) % 2 === 1) b[r * 8 + c] = -1;
       for (let r = 5; r < 8; r++) for (let c = 0; c < 8; c++) if ((r + c) % 2 === 1) b[r * 8 + c] = 1;
+      bumpRep(b, turn);
 
       const board = mk('div', 'board ck');
       ctx.boardEl.appendChild(board);
@@ -820,6 +846,11 @@ const checkers = (() => {
         } else if (who === HUMAN) { ctx.setStatus('You win', 'win'); Sound.win(); ctx.end('w', 'You win'); }
         else { ctx.setStatus('Talia wins', 'lose'); Sound.lose(); ctx.end('l', 'Talia wins'); }
       }
+      function drawRepeat() {
+        over = true; sel = null; render();
+        ctx.setStatus('Draw', 'draw'); Sound.draw();
+        ctx.end('d', 'Draw — threefold repetition');
+      }
       function click(i) {
         if (over || !humanTurn()) return;
         const opts = movesFor(turn);
@@ -847,6 +878,7 @@ const checkers = (() => {
           return finish(turn);
         }
         turn = next; render(); sync();
+        if (bumpRep(b, turn) >= 3) return drawRepeat();
         if (mode === 'ai' && turn === -1) think();
       }
       async function think() {
@@ -862,6 +894,7 @@ const checkers = (() => {
         const next = -turn;
         if (!movesFor(next).length) { render(); return finish(turn); }
         turn = next; render(); sync();
+        if (bumpRep(b, turn) >= 3) return drawRepeat();
       }
       function undo() {
         if (!hist.length) return;
@@ -869,6 +902,7 @@ const checkers = (() => {
         let s = hist.pop();
         while (mode === 'ai' && s.turn !== HUMAN && hist.length) s = hist.pop();
         b = Int8Array.from(s.b); turn = s.turn; render(); sync();
+        rep.clear(); for (const h of hist) bumpRep(h.b, h.turn); bumpRep(b, turn);
       }
       function hint() {
         if (over || !humanTurn()) return;
@@ -1352,6 +1386,23 @@ const chess = (() => {
       }
       const humanTurn = () => mode === 'two' || st.turn === HUMAN;
 
+      /* Threefold repetition: count every position (pieces, side to move,
+         castling rights, en-passant square) as it is reached; the third
+         occurrence is a draw. Harness-visible via __nxChess.rep(). */
+      const rep = new Map();
+      const posKey = s => s.b.join(',') + '|' + s.turn + '|' + s.castle + '|' + s.ep;
+      function bumpRep(s) {
+        const k = posKey(s), n = (rep.get(k) || 0) + 1;
+        rep.set(k, n);
+        return n;
+      }
+      function rebuildRep() {
+        rep.clear();
+        for (const s of hist) bumpRep(s);
+        bumpRep(st);
+      }
+      bumpRep(st);
+
       function render() {
         const b = st.b;
         const dests = sel != null ? legal(st, st.turn).filter(m => m.from === sel) : [];
@@ -1403,6 +1454,7 @@ const chess = (() => {
           else { res = 'l'; label = 'Checkmate — Talia wins'; }
         } else if (kind === 'stale') { res = 'd'; label = 'Stalemate — draw'; }
         else if (kind === 'material') { res = 'd'; label = 'Draw — not enough material'; }
+        else if (kind === 'repeat') { res = 'd'; label = 'Draw — threefold repetition'; }
         else { res = 'd'; label = 'Draw — fifty quiet moves'; }
 
         if (res === 'w') { ctx.setStatus('You win', 'win'); Sound.win(); }
@@ -1417,6 +1469,7 @@ const chess = (() => {
         if (!legal(st, side).length) return finish(inCheck(st, side) ? 'mate' : 'stale', mover);
         if (st.half >= 100) return finish('fifty', 0);
         if (insufficient(st.b)) return finish('material', 0);
+        if ((rep.get(posKey(st)) || 0) >= 3) return finish('repeat', 0);
         sync();
         if (mode === 'ai' && st.turn !== HUMAN) think();
       }
@@ -1430,6 +1483,7 @@ const chess = (() => {
         hist.push(snapshot());
         const rec = make(st, m);
         last = m; sel = null;
+        bumpRep(st);
         if (rec.cap) Sound.capture(); else Sound.chip();
         afterMove(mover);
       }
@@ -1493,6 +1547,7 @@ const chess = (() => {
         while (mode === 'ai' && s.turn !== HUMAN && hist.length) s = hist.pop();
         st = { b: Int8Array.from(s.b), turn: s.turn, castle: s.castle, ep: s.ep, half: s.half };
         last = s.last || null;
+        rebuildRep();
         render(); sync();
       }
 
@@ -1516,11 +1571,13 @@ const chess = (() => {
         window.__nxChess.load = fen => {
           if (!ctx.alive()) return false;
           st = fromFen(fen); hist = []; over = false; sel = null; last = null; tips = [];
+          rep.clear(); bumpRep(st);
           if (promo) { promo = null; const v = board.querySelector('.promo'); if (v) v.remove(); }
           ctx.clearBanner(); render(); sync();
           if (mode === 'ai' && st.turn !== HUMAN) think();
           return true;
         };
+        window.__nxChess.rep = () => ({ key: posKey(st), count: rep.get(posKey(st)) || 0, positions: rep.size });
       }
 
       render(); sync();
@@ -1950,8 +2007,13 @@ const blackjack = {
   mount(ctx) {
     const wrap = mk('div', 'bj');
     ctx.boardEl.appendChild(wrap);
-    let chips = typeof store.bank === 'number' ? store.bank : 500;
+    const MIN_BET = 10, START_BANK = 500;
+    let chips = typeof store.bank === 'number' ? store.bank : START_BANK;
     let bet = typeof store.bet === 'number' ? store.bet : 25;
+    // A persisted bank below the smallest chip button would leave Deal disabled
+    // (chips < bet) forever, because nothing could call startHand again. Restore
+    // it on sight so the state is unreachable, not merely recoverable.
+    if (chips < MIN_BET) { chips = START_BANK; store.bank = chips; save(); }
     let shoe = [], dealer = [], player = [], stake = 0;
     let phase = 'bet', hidden = true, busy = false, msg = '', tone = '';
 
@@ -2034,8 +2096,9 @@ const blackjack = {
     function status(text, kind) { ctx.setStatus(text, kind); }
 
     async function startHand() {
-      if (busy || chips < bet) return;
-      if (chips < 5) { chips = 500; saveBank(); }
+      if (busy) return;
+      if (chips < MIN_BET) { chips = START_BANK; saveBank(); }   // never deal from a busted bank
+      if (chips < bet) return;
       if (shoe.length < 30) shoe = buildShoe();
       busy = true; hidden = true; phase = 'player'; stake = bet;
       chips -= stake; saveBank();
@@ -3519,6 +3582,7 @@ const stickParty = (() => {
       'so both pairs of hands stay on the keyboard.',
     hideMode: true,
     hideDiff: true,
+    needsKeyboard: true,
     mount
   };
 })();
@@ -3542,11 +3606,60 @@ muteBtn.addEventListener('click', () => {
   if (!store.mute) Sound.click();
 });
 backBtn.addEventListener('click', hub);
+
+/* ---------- record: download + reset (footer controls) ---------- */
+const COARSE = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+const exportBtn = $('#record-export');
+const clearBtn = $('#record-clear');
+
+function recordJSON() {
+  return JSON.stringify({
+    app: 'NxGen Arcade',
+    key: KEY,
+    exported: new Date().toISOString(),
+    scores: store.scores
+  }, null, 2);
+}
+function repaintRecords() {
+  if (document.body.dataset.view === 'hub') return hub();
+  const cell = $('.game .record b');
+  if (cell && document.body.dataset.game) cell.textContent = recText(document.body.dataset.game);
+}
+exportBtn.addEventListener('click', () => {
+  const blob = new Blob([recordJSON()], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = mk('a');
+  a.href = url; a.download = 'arcade-record.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  Sound.click();
+});
+clearBtn.addEventListener('click', () => {
+  if (!Object.keys(store.scores).length) {
+    clearBtn.textContent = 'Nothing to clear';
+    setTimeout(() => { clearBtn.textContent = 'Clear record'; }, 1400);
+    return;
+  }
+  if (!confirm('Clear the win/loss record for all ten games? This cannot be undone.')) return;
+  store.scores = {}; save(); repaintRecords();
+});
+
+/* ---------- keyboard path while a game is open ---------- */
+let keyed = null;   // { undo, hint, newGame } for the mounted game, or null on the hub
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') hub();
+  if (e.key === 'Escape') { hub(); return; }
+  if (!keyed || e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (k === 'u') { e.preventDefault(); keyed.undo(); }
+  else if (k === 'h') { e.preventDefault(); keyed.hint(); }
+  else if (k === 'n') { e.preventDefault(); keyed.newGame(); }
 });
 
 function teardown() {
+  keyed = null;
   if (live) { live.destroy(); live = null; }
   screenEl.textContent = '';
 }
@@ -3571,6 +3684,7 @@ function hub() {
       '<h3>' + g.name + '</h3>' +
       '<span class="tag">' + g.tag + '</span>' +
       '<p>' + g.blurb + '</p>' +
+      (COARSE && g.needsKeyboard ? '<span class="warn">needs a keyboard</span>' : '') +
       '<span class="rec">' + recText(g.id) + '</span>';
     card.addEventListener('click', () => { Sound.click(); openGame(g); });
     grid.appendChild(card);
@@ -3582,6 +3696,7 @@ function hub() {
 function openGame(g) {
   teardown();
   document.body.dataset.view = 'game';
+  document.body.dataset.game = g.id;
   const sec = mk('section', 'game');
   sec.style.setProperty('--accent', getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
   const head = mk('div', 'game-head');
@@ -3614,6 +3729,10 @@ function openGame(g) {
   if (!g.hideMode) { panel.appendChild(labelMode); panel.appendChild(segMode); }
   if (!g.hideDiff) { panel.appendChild(labelDiff); panel.appendChild(segDiff); }
   panel.appendChild(row); panel.appendChild(rec); panel.appendChild(rules);
+  if (COARSE && g.needsKeyboard) {
+    const warn = mk('p', 'touchwarn', 'Needs a keyboard: two players, W A S D and the arrow keys. There is no touch input, so this one will not play on a phone.');
+    panel.appendChild(warn);
+  }
 
   boardwrap.appendChild(mk('div', 'boardhost'));
   body.appendChild(boardwrap); body.appendChild(panel);
@@ -3673,6 +3792,12 @@ function openGame(g) {
   btnUndo.addEventListener('click', () => { if (ctrl.undo) { ctrl.undo(); Sound.click(); } });
   btnHint.addEventListener('click', () => { if (ctrl.hint) ctrl.hint(); });
   btnNew.addEventListener('click', () => { Sound.click(); openGame(g); });
+
+  keyed = {
+    undo: () => { if (!btnUndo.disabled && ctrl.undo) { ctrl.undo(); Sound.click(); } },
+    hint: () => { if (!btnHint.disabled && ctrl.hint) ctrl.hint(); },
+    newGame: () => { Sound.click(); openGame(g); }
+  };
 
   $$('[data-mode]', segMode).forEach(b => b.addEventListener('click', () => {
     store.mode = b.dataset.mode; save();

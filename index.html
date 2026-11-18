@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark">
+<meta name="description" content="Ten games — chess, checkers, Reversi, Connect Four, Mancala, Blackjack and more — offline, nothing to install, against a local AI or a second player at the same keyboard.">
 <title>Arcade — ten games, no internet</title>
 <style>
 :root{
@@ -100,6 +101,18 @@ body[data-view="game"] .brand{display:none}
 }
 .card .rec b{color:var(--muted);font-weight:500}
 .card:hover .rec{color:var(--muted)}
+.card .warn{
+  display:inline-block;margin-top:12px;padding:3px 8px;border-radius:99px;
+  font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;
+  color:#e8b07a;border:1px solid color-mix(in srgb,#e8b07a 35%,var(--line));
+  background:color-mix(in srgb,#e8b07a 8%,transparent);
+}
+.touchwarn{
+  margin:10px 0 0;padding:9px 11px;border-radius:8px;
+  font-family:var(--mono);font-size:9.5px;line-height:1.6;letter-spacing:.06em;
+  color:#e8b07a;border:1px solid color-mix(in srgb,#e8b07a 28%,var(--line));
+  background:color-mix(in srgb,#e8b07a 6%,transparent);
+}
 
 /* ---------- game screen ---------- */
 .game{width:100%;max-width:1080px;margin:0 auto;padding:8px 26px 56px}
@@ -450,6 +463,16 @@ footer{
   margin-top:auto;padding:26px;text-align:center;
   font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:#4e463f;
 }
+footer .foot-actions{
+  display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-top:12px;
+}
+footer .linkbtn{
+  background:none;border:0;border-bottom:1px solid #3a332e;padding:2px 0;margin:0;
+  font:inherit;letter-spacing:.16em;text-transform:uppercase;color:#6b6057;cursor:pointer;
+  transition:color .15s,border-color .15s;
+}
+footer .linkbtn:hover{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}
+footer .linkbtn:focus-visible{outline:1px solid var(--accent);outline-offset:3px}
 </style>
 </head>
 <body data-view="hub">
@@ -460,7 +483,13 @@ footer{
   <button id="mute" class="iconbtn" type="button" aria-label="Toggle sound" title="Sound on/off">♪</button>
 </div>
 <main id="screen" style="width:100%"></main>
-<footer>Offline · nothing leaves this machine · your record is kept locally</footer>
+<footer>
+  <span>Ten games · offline · nothing leaves this machine · record kept in this browser</span>
+  <span class="foot-actions">
+    <button id="record-export" class="linkbtn" type="button">Download record</button>
+    <button id="record-clear" class="linkbtn" type="button">Clear record</button>
+  </span>
+</footer>
 <script src="arcade.js"></script>
 </body>
 </html>

@@ -60,8 +60,66 @@ in the win/loss strip, because there is no winner to credit.
 - **Undo** — rewinds your last move *and* the AI's reply (in Chess, promotion and
   castling included).
 - **Hint** — searches a shallow line for whoever is to move and flashes the square.
-- **Esc** — back to the board list. **♪** — sound on/off (all audio is synthesised,
-  no files).
+- **Esc** — back to the board list. **u** / **h** / **n** — undo, hint and new game.
+  **♪** — sound on/off (all audio is synthesised, no files).
+
+## Features
+
+Ten games, one page, no install: Tic-Tac-Toe, Connect Four, Reversi, Checkers, Chess,
+Five in a Row, Mancala, Blackjack, Big Two and Stickman Party. They are all entries in
+one `GAMES` array, so the hub cards, the tagline and the rules panel are generated from
+the game object itself.
+
+- **Three moods** — Easy, Steady, Ruthless — change search depth and set a thinking
+  budget of 200 ms, 520 ms, 950 ms.
+- **Hotseat** — `vs Talia` or `2 players` on one keyboard. Hotseat games aren't scored:
+  there's no winner to credit.
+- **Undo** in the eight turn-based board and card games; it rewinds your move and the
+  reply. Blackjack has none, because a dealt card is a dealt card.
+- **Hint** in nine games. In Blackjack it's a basic-strategy advisor ("Basic play says:
+  hit"), not a peek at the shoe.
+- **Record** — wins, losses and draws per game, kept in `localStorage` and shown on the
+  hub card (`1W · 2L · 0D`) and in the game panel. A fresh profile reads
+  `no games played`. `Download record` in the footer saves it as JSON; `Clear record`
+  wipes it after a confirm.
+- **Blackjack bankroll** — chips and your bet size carry over between visits, and Deal
+  stays disabled while the bank can't cover the bet.
+- **Stickman Party** — five real-time duels, best of five, one extra round on a tie.
+  Losing window focus pauses the round; click the arena to resume.
+- **Sound** is synthesised at runtime, so there are no audio files to lose. **Esc**
+  returns to the hub from any game.
+- **Keyboard and touch** — board squares are real buttons with `aria-label`s, and the
+  chess and checkers boards take `Tab` and answer `Enter`/`Space`. The layout reflows at
+  560 px, and `prefers-reduced-motion` turns the animation off.
+
+The desktop window adds its own chrome: F11 fullscreen, Ctrl+Q quit, Ctrl+R reload, F12
+inspector, Ctrl `+` / `-` / `0` zoom, and window size, maximised state and zoom restored
+on the next launch.
+
+## Customizability
+
+Everything you can change without editing a file:
+
+| Knob | Where | Values |
+|---|---|---|
+| Sound | the ♪ button in the top bar | on / off |
+| Opponent | "Opponent" segment in the game panel | vs Talia / 2 players |
+| Mood | "Mood" segment in the game panel | Easy / Steady / Ruthless |
+| Blackjack bet | the chip buttons while betting | 10 / 25 / 50 / 100 |
+
+Those settings, the per-game record and the Blackjack bankroll share one `localStorage`
+key, `nxgen.arcade.v1`. Three games hide the opponent segment (Big Two is always three
+AI seats, Blackjack and Stickman Party have no AI to choose); two hide the mood segment
+(Blackjack, Stickman Party). That's the `hideMode` / `hideDiff` flag on the game object,
+not something you can toggle.
+
+For the desktop window: `ARCADE_PORT` (default 8788) and `ARCADE_DEBUG=1` for console
+output. `~/.local/share/arcade/window.json` holds width, height, maximised and zoom; the
+WebKit profile beside it is what makes the record survive a restart.
+
+There is no theme switcher. The palette is 16 CSS custom properties in `:root` at the top
+of `index.html` — twelve colours, three font stacks and a corner radius. Change `--accent`
+and the rest of the set follows it.
 
 ## Layout
 
@@ -95,14 +153,16 @@ both, and draws into a canvas instead of DOM squares.
 ## Known limits
 
 - No online play, no accounts, no undo history beyond the current game.
-- Threefold-repetition and draw rules aren't implemented in Checkers or Reversi
-  (Reversi does end when both sides are stuck).
+- Threefold repetition is a draw in Chess, Checkers and Reversi; Chess also has
+  stalemate, the fifty-move rule and dead positions. (Reversi ends when both sides
+  are stuck.) There is no draw-by-agreement and no clocks anywhere.
 - Chess covers the full rule set — castling, en passant, promotion, checkmate,
-  stalemate, the fifty-move rule and dead positions — but not threefold
-  repetition, and there are no clocks. Its move generator is verified against
-  perft: `ARCADE_PORT=8799 /usr/bin/python3 ctest.py`.
+  stalemate, the fifty-move rule and dead positions — and threefold repetition.
+  Its move generator is verified against perft:
+  `ARCADE_PORT=8799 /usr/bin/python3 ctest.py`.
 - Stickman Party is keyboard-only (no gamepads) and its duels are deliberately
-  short; `stest.py` drives all five through the real WebView.
+  short; `stest.py` drives all five through the real WebView. Touch devices get a
+  "needs a keyboard" badge on its hub card.
 - `window.__nxChess` and `window.__nxParty` are test hooks (perft + FEN loader, and
   minigame state) used by `ctest.py` / `stest.py`; nothing in the UI depends on them.
 - The record is per browser profile. Clearing site data resets it.
