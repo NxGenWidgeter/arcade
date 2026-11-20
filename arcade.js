@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
-   NxGen Arcade — ten games, entirely offline.
+   NxGen Arcade — eleven games, entirely offline.
    No dependencies, no network, no build step.
    ============================================================ */
 (() => {
@@ -2016,6 +2016,8 @@ const blackjack = {
     if (chips < MIN_BET) { chips = START_BANK; store.bank = chips; save(); }
     let shoe = [], dealer = [], player = [], stake = 0;
     let phase = 'bet', hidden = true, busy = false, msg = '', tone = '';
+    // rollback: one snapshot per decision, taken before the decision is applied
+    let hist = [], gen = 0, settled = null;
 
     const dlbl = mk('div', 'rowlbl'); dlbl.innerHTML = '<span>Dealer</span><b class="dtot">–</b>';
     const dhand = mk('div', 'hand');
@@ -2100,6 +2102,7 @@ const blackjack = {
       if (chips < MIN_BET) { chips = START_BANK; saveBank(); }   // never deal from a busted bank
       if (chips < bet) return;
       if (shoe.length < 30) shoe = buildShoe();
+      push();
       busy = true; hidden = true; phase = 'player'; stake = bet;
       chips -= stake; saveBank();
       dealer = [draw()]; player = [draw(), draw()]; dealer.push(draw());
@@ -2112,31 +2115,35 @@ const blackjack = {
     }
     function hit() {
       if (phase !== 'player' || busy) return;
+      push();
       player.push(draw()); Sound.place();
       const t = total(player);
       if (t > 21) { phase = 'dealer'; hidden = false; return settle(); }
       render();
       if (t === 21) stand();
     }
-    async function stand() {
+    async function stand(quiet) {
       if (phase !== 'player' || busy) return;
+      if (!quiet) push();
+      const g0 = gen;
       phase = 'dealer'; hidden = false; busy = true;
       render(); status('Dealer draws', 'ai'); Sound.pass();
       while (total(dealer) < 17) {
         await sleep(330);
-        if (!ctx.alive()) return;
+        if (!ctx.alive() || gen !== g0) return;
         dealer.push(draw()); Sound.place(); render();
       }
       await sleep(240);
-      if (!ctx.alive()) return;
+      if (!ctx.alive() || gen !== g0) return;
       busy = false; settle();
     }
     async function doubleDown() {
       if (phase !== 'player' || busy || player.length !== 2 || chips < bet) return;
+      push();
       chips -= bet; stake += bet; saveBank();
       player.push(draw()); Sound.place(); render();
       if (total(player) > 21) { phase = 'dealer'; hidden = false; return settle(); }
-      await stand();
+      await stand(true);
     }
     function settle() {
       phase = 'done'; hidden = false;
@@ -2153,6 +2160,7 @@ const blackjack = {
       else if (p < d) { res = 'l'; text = d + ' beats ' + p + '. The house takes it.'; t = 'bad'; }
       else { res = 'd'; payout = stake; text = 'Push at ' + p + '.'; }
       chips += payout; saveBank();
+      settled = res;
       setMsg(text, t);
       render();
       status(res === 'w' ? 'You win' : res === 'l' ? 'Dealer wins' : 'Push',
@@ -2177,6 +2185,26 @@ const blackjack = {
       if (pv >= 15) return up >= 4 && up <= 6 ? D() : 'hit';
       return up >= 5 && up <= 6 ? D() : 'hit';
     }
+    function push() {
+      hist.push({
+        chips, bet, stake, phase, hidden, msg, tone, settled,
+        shoe: shoe.slice(), dealer: dealer.slice(), player: player.slice()
+      });
+      if (hist.length > 60) hist.shift();
+    }
+    function undo() {
+      const s = hist.pop();
+      if (!s) { setMsg('Nothing to roll back — deal a hand first.', ''); render(); return; }
+      gen++;
+      busy = false;
+      if (settled && settled !== s.settled) ctx.unrecord(settled);
+      chips = s.chips; bet = s.bet; stake = s.stake; phase = s.phase;
+      hidden = s.hidden; msg = s.msg; tone = s.tone; settled = s.settled;
+      shoe = s.shoe; dealer = s.dealer; player = s.player;
+      saveBank();
+      render();
+      status(phase === 'player' ? 'Your move' : 'Place your bet', 'you');
+    }
     function hint() {
       if (phase !== 'player' || !player.length) { setMsg('Deal a hand first.', ''); render(); return; }
       const a = advice(total(player), isSoft(player), worth(dealer[0]), player.length === 2 && chips >= bet);
@@ -2187,12 +2215,414 @@ const blackjack = {
 
     setMsg('Pick a bet and deal.', '');
     render(); status('Place your bet', 'you');
-    return { hint };
+    return { undo, hint };
   }
 };
 
 /* ============================================================
-   9. BIG TWO
+   9. POKER — heads-up hold'em, fixed limit
+   ============================================================ */
+const poker = (() => {
+  const CATS = ['High card', 'One pair', 'Two pair', 'Three of a kind', 'Straight',
+    'Flush', 'Full house', 'Four of a kind', 'Straight flush'];
+  const label = r => r === 1 ? 'A' : r === 11 ? 'J' : r === 12 ? 'Q' : r === 13 ? 'K' : String(r);
+
+  // seven cards in, [category, tiebreak...] out — bigger wins, compare lexicographically
+  function rank(cards) {
+    const cnt = new Array(15).fill(0);
+    const suits = [[], [], [], []];
+    cards.forEach(c => {
+      const r = c.r === 1 ? 14 : c.r;      // ace high while counting, low in a wheel straight
+      cnt[r]++;
+      suits[c.s].push(r);
+    });
+    let flush = null;
+    for (let s = 0; s < 4; s++) if (suits[s].length >= 5) flush = suits[s];
+    function topStraight(ranks) {
+      const have = new Set(ranks);
+      if (have.has(14)) have.add(1);
+      for (let hi = 14; hi >= 5; hi--) {
+        let ok = true;
+        for (let k = 0; k < 5; k++) if (!have.has(hi - k)) { ok = false; break; }
+        if (ok) return hi;
+      }
+      return 0;
+    }
+    if (flush) {
+      const sf = topStraight(flush);
+      if (sf) return [8, sf];
+    }
+    const groups = [];
+    for (let r = 14; r >= 2; r--) if (cnt[r]) groups.push([r, cnt[r]]);
+    groups.sort((a, b) => (b[1] - a[1]) || (b[0] - a[0]));
+    const quad = groups.find(g => g[1] === 4);
+    if (quad) {
+      const kick = groups.filter(g => g[0] !== quad[0]).map(g => g[0])[0] || 0;
+      return [7, quad[0], kick];
+    }
+    const trips = groups.filter(g => g[1] >= 3);
+    const pairs = groups.filter(g => g[1] >= 2);
+    if (trips.length >= 2) return [6, trips[0][0], trips[1][0]];
+    if (trips.length === 1 && pairs.length >= 2) {
+      return [6, trips[0][0], pairs.filter(g => g[0] !== trips[0][0])[0][0]];
+    }
+    if (flush) {
+      flush.sort((a, b) => b - a);
+      return [5].concat(flush.slice(0, 5));
+    }
+    const st = topStraight(cards.map(c => c.r === 1 ? 14 : c.r));
+    if (st) return [4, st];
+    if (trips.length === 1) {
+      return [3, trips[0][0]].concat(groups.filter(g => g[0] !== trips[0][0]).map(g => g[0]).slice(0, 2));
+    }
+    if (pairs.length >= 2) {
+      const kick = groups.filter(g => g[0] !== pairs[0][0] && g[0] !== pairs[1][0]).map(g => g[0])[0] || 0;
+      return [2, pairs[0][0], pairs[1][0], kick];
+    }
+    if (pairs.length === 1) {
+      return [1, pairs[0][0]].concat(groups.filter(g => g[0] !== pairs[0][0]).map(g => g[0]).slice(0, 3));
+    }
+    return [0].concat(groups.map(g => g[0]).slice(0, 5));
+  }
+  function cmp(a, b) {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const x = a[i] || 0, y = b[i] || 0;
+      if (x !== y) return x < y ? -1 : 1;
+    }
+    return 0;
+  }
+  // preflop only: no five cards yet, so score the two hole cards instead
+  function preScore(cards) {
+    const h = cards.map(c => c.r === 1 ? 14 : Math.min(10, c.r));
+    const hi = Math.max(h[0], h[1]), lo = Math.min(h[0], h[1]);
+    const suited = cards[0].s === cards[1].s, pair = cards[0].r === cards[1].r;
+    let s = (hi / 14) * 0.34 + (lo / 14) * 0.18;
+    if (pair) s = 0.36 + (hi / 14) * 0.42;
+    if (suited) s += 0.06;
+    if (hi - lo === 1) s += 0.05;
+    else if (hi - lo === 2 && suited) s += 0.02;
+    return Math.min(0.98, s);
+  }
+
+  return {
+    id: 'pk', name: 'Poker',
+    tag: 'hold them',
+    hideMode: true,
+    blurb: 'Heads-up hold\'em against Talia: two hole cards, five shared, fixed-limit betting. Blinds 10/20, big bet 40.',
+    rules: 'Heads-up Texas hold\'em, fixed limit. Blinds 10/20; bets and raises are 20 before the turn and 40 after, four raises a street. Best five of your seven cards wins at showdown, or take the pot when the other player folds. Your chips carry over between hands — 500 each, refilled when someone goes broke.',
+    mount(ctx) {
+      const START = 500, SB = 10, BB = 20, SMALL = 20, BIG = 40, MAX_RAISES = 4;
+      const wrap = mk('div', 'bj pk');
+      ctx.boardEl.appendChild(wrap);
+      let bank = Array.isArray(store.pok) && store.pok.length === 2 ? store.pok.slice() : [START, START];
+      if (bank[0] < BB || bank[1] < BB) bank = [START, START];
+      let deck = [], board = [], hole = [[], []], pot = 0, bets = [0, 0];
+      let street = 0, button = 0, toAct = 0, acted = [false, false], raises = 0;
+      let allIn = [false, false], shown = [false, false], phase = 'idle';
+      let msg = '', tone = '', busy = false, over = false, recorded = null;
+      let hist = [], gen = 0;
+
+      const dlbl = mk('div', 'rowlbl');
+      const dhand = mk('div', 'hand');
+      const blbl = mk('div', 'rowlbl');
+      const bhand = mk('div', 'hand');
+      const msgEl = mk('div', 'msg');
+      const plbl = mk('div', 'rowlbl');
+      const phand = mk('div', 'hand');
+      const bar = mk('div', 'bjbar');
+      const bankEl = mk('div', 'bank');
+      wrap.appendChild(dlbl); wrap.appendChild(dhand);
+      wrap.appendChild(blbl); wrap.appendChild(bhand);
+      wrap.appendChild(msgEl);
+      wrap.appendChild(plbl); wrap.appendChild(phand);
+      wrap.appendChild(bar); wrap.appendChild(bankEl);
+
+      const saveBank = () => { store.pok = bank.slice(); save(); };
+      function setMsg(t, k) { msg = t; tone = k || ''; }
+      const need = () => Math.max(bets[0], bets[1]);
+      const unit = () => street >= 2 ? BIG : SMALL;
+      const callFor = i => Math.max(0, Math.min(need() - bets[i], bank[i]));
+
+      function paintCards() {
+        dhand.innerHTML = '';
+        for (let k = 0; k < Math.max(2, hole[1].length); k++) {
+          const c = hole[1][k];
+          dhand.appendChild(shown[1] && c ? cardNode(label(c.r), c.s) : cardNode('', 0, true));
+        }
+        bhand.innerHTML = '';
+        for (let k = 0; k < 5; k++) {
+          const c = board[k];
+          if (c) bhand.appendChild(cardNode(label(c.r), c.s));
+          else {
+            const e = mk('div', 'pcard slot');
+            bhand.appendChild(e);
+          }
+        }
+        phand.innerHTML = '';
+        hole[0].forEach(c => phand.appendChild(cardNode(label(c.r), c.s)));
+        dlbl.innerHTML = '<span>Talia</span><b>' + bank[1] + '</b>';
+        blbl.innerHTML = '<span>Board</span><b>' + (board.length ? board.length + ' cards' : 'preflop') + '</b>';
+        plbl.innerHTML = '<span>You</span><b>' + bank[0] + '</b>';
+      }
+      function paintBar() {
+        bar.innerHTML = '';
+        if (phase !== 'play') {
+          const d = mk('button', 'btn primary', phase === 'done' ? 'Next hand' : 'Deal');
+          d.type = 'button';
+          d.onclick = () => { Sound.click(); deal(); };
+          bar.appendChild(d);
+          return;
+        }
+        if (toAct !== 0) {
+          bar.appendChild(mk('div', 'bank', 'Talia is thinking…'));
+          return;
+        }
+        const call = callFor(0);
+        const f = mk('button', 'btn', 'Fold'); f.type = 'button';
+        f.onclick = () => human('fold');
+        bar.appendChild(f);
+        if (call > 0) {
+          const c = mk('button', 'btn primary', 'Call ' + call); c.type = 'button';
+          c.onclick = () => human('call');
+          bar.appendChild(c);
+        } else {
+          const c = mk('button', 'btn primary', 'Check'); c.type = 'button';
+          c.onclick = () => human('check');
+          bar.appendChild(c);
+        }
+        const canRaise = raises < MAX_RAISES && bank[0] > call;
+        const raiseTo = need() + unit();
+        const r = mk('button', 'btn', (need() > 0 ? 'Raise to ' : 'Bet ') + raiseTo);
+        r.type = 'button';
+        r.disabled = !canRaise;
+        r.onclick = () => human(need() > 0 ? 'raise' : 'bet');
+        bar.appendChild(r);
+      }
+      function paint() {
+        paintCards();
+        paintBar();
+        msgEl.textContent = msg;
+        msgEl.className = 'msg' + (tone ? ' ' + tone : '');
+        bankEl.innerHTML = 'Pot <b>' + pot + '</b> · blinds ' + SB + '/' + BB +
+          ' · ' + (over ? 'hand over' : (street === 0 ? 'preflop' : ['flop', 'turn', 'river'][street - 1]));
+      }
+      function status(text, kind) { ctx.setStatus(text, kind); }
+
+      function post(i, amount) {
+        const pay = Math.min(amount, bank[i]);
+        bank[i] -= pay; bets[i] += pay; pot += pay;
+        if (bank[i] === 0) allIn[i] = true;
+      }
+      function deal() {
+        if (busy) return;
+        if (bank[0] < BB || bank[1] < BB) bank = [START, START];
+        deck = [];
+        for (let s = 0; s < 4; s++) for (let r = 1; r <= 13; r++) deck.push({ r, s });
+        for (let i = deck.length - 1; i > 0; i--) { const j = rnd(i + 1); const t = deck[i]; deck[i] = deck[j]; deck[j] = t; }
+        board = []; pot = 0; bets = [0, 0]; street = 0; raises = 0;
+        acted = [false, false]; allIn = [false, false]; shown = [false, false];
+        over = false; recorded = null; hist = []; gen++; busy = false;
+        button = phase === 'idle' ? button : 1 - button;
+        post(button, SB);
+        post(1 - button, BB);
+        hole[0] = [deck.pop(), deck.pop()];
+        hole[1] = [deck.pop(), deck.pop()];
+        phase = 'play';
+        toAct = button;
+        setMsg(toAct === 0 ? 'Preflop. You are first — call, raise or fold.' : 'Preflop. Talia is first.', '');
+        saveBank();
+        paint(); status('Hand in play', 'you'); Sound.place();
+        if (toAct === 1) aiTurn();
+      }
+      function finish(winner, text, res) {
+        over = true; phase = 'done'; shown = [true, true];
+        if (winner === -1) {
+          const half = Math.floor(pot / 2);
+          bank[0] += half; bank[1] += pot - half;
+        } else bank[winner] += pot;
+        const broke = bank[0] < BB || bank[1] < BB;
+        if (broke) bank = [START, START];
+        saveBank();
+        setMsg(text, winner === 0 ? 'good' : winner === 1 ? 'bad' : '');
+        paint();
+        status(winner === 0 ? 'You take the pot' : winner === 1 ? 'Talia takes the pot' : 'Split pot',
+          winner === 0 ? 'win' : winner === 1 ? 'lose' : 'draw');
+        Sound[winner === 0 ? 'win' : winner === 1 ? 'lose' : 'draw']();
+        recorded = res;
+        ctx.record(res);
+        if (broke) setTimeout(() => { setMsg('Someone went broke — both stacks are back to ' + START + '.', ''); paint(); }, 900);
+      }
+      function showdown() {
+        shown = [true, true];
+        const a = rank(hole[0].concat(board)), b = rank(hole[1].concat(board));
+        const c = cmp(a, b);
+        const mine = CATS[a[0]].toLowerCase(), hers = CATS[b[0]].toLowerCase();
+        const other = mine === hers ? '' : ' She had ' + hers + '.';
+        if (c > 0) finish(0, 'You win with ' + mine + '.' + other, 'w');
+        else if (c < 0) finish(1, 'Talia wins with ' + hers +
+          (mine === hers ? ' — her kickers were better.' : ' — you had ' + mine + '.'), 'l');
+        else finish(-1, 'Split pot — ' + mine + ' each.', 'd');
+      }
+      function nextStreet() {
+        bets = [0, 0]; acted = [false, false]; raises = 0;
+        street++;
+        if (street === 1) { board.push(deck.pop(), deck.pop(), deck.pop()); Sound.place(); }
+        else if (street === 2 || street === 3) { board.push(deck.pop()); Sound.place(); }
+        if (street > 3) { showdown(); return; }
+        toAct = 1 - button;
+        setMsg((street === 1 ? 'Flop' : street === 2 ? 'Turn' : 'River') + ' — ' +
+          (toAct === 0 ? 'your move.' : 'Talia to act.'), '');
+        paint();
+        if (toAct === 1) aiTurn();
+      }
+      function runOut() {
+        const g0 = gen;
+        const tick = () => {
+          if (gen !== g0 || !ctx.alive() || over) return;
+          if (street >= 3) { showdown(); return; }
+          bets = [0, 0]; acted = [false, false]; raises = 0; street++;
+          if (street === 1) board.push(deck.pop(), deck.pop(), deck.pop());
+          else board.push(deck.pop());
+          Sound.place(); paint();
+          setTimeout(tick, 520);
+        };
+        setMsg('All in — the board runs out.', '');
+        paint();
+        setTimeout(tick, 520);
+      }
+      function nextTurn(from) {
+        if (over) return;
+        if (allIn[0] || allIn[1]) { runOut(); return; }
+        if (acted[0] && acted[1] && bets[0] === bets[1]) { nextStreet(); return; }
+        toAct = 1 - from;
+        if (toAct === 0) { setMsg(need() > bets[0] ? 'Your move — ' + callFor(0) + ' to call.' : 'Checked to you.', ''); paint(); }
+        else { paint(); aiTurn(); }
+      }
+      function act(i, kind) {
+        if (over || phase !== 'play' || toAct !== i) return;
+        if (kind === 'fold') {
+          finish(1 - i, i === 0 ? 'You fold — Talia takes the pot.' : 'Talia folds — the pot is yours.', i === 0 ? 'l' : 'w');
+          return;
+        }
+        const call = callFor(i);
+        if (kind === 'check') {
+          if (call > 0) return;
+          acted[i] = true;
+        } else if (kind === 'call') {
+          bank[i] -= call; bets[i] += call; pot += call;
+          if (bank[i] === 0) allIn[i] = true;
+          acted[i] = true;
+          Sound.place();
+        } else {
+          const pay = Math.min(need() + unit() - bets[i], bank[i]);
+          bank[i] -= pay; bets[i] += pay; pot += pay;
+          if (bank[i] === 0) allIn[i] = true;
+          acted[i] = true; acted[1 - i] = false; raises++;
+          Sound.capture();
+        }
+        saveBank();
+        paint();
+        nextTurn(i);
+      }
+      function strength(i) {
+        const cards = hole[i].concat(board);
+        if (cards.length < 5) return preScore(hole[i]);
+        const v = rank(cards);
+        const base = [0.16, 0.36, 0.55, 0.72, 0.8, 0.85, 0.91, 0.96, 0.99][v[0]];
+        return Math.min(1, base + (v[1] || 0) / 300);
+      }
+      function decide() {
+        const s = strength(1);
+        const call = callFor(1);
+        const aggro = [0.3, 0.46, 0.62][ctx.diff] || 0.46;
+        const nerve = [0.1, 0.02, -0.06][ctx.diff] || 0.02;
+        if (call === 0) {
+          return raises < MAX_RAISES && s > 0.58 - aggro * 0.2 && Math.random() < 0.5 + aggro * 0.35
+            ? 'bet' : 'check';
+        }
+        if (raises < MAX_RAISES && s > 0.86 && Math.random() < 0.3 + aggro * 0.45) return 'raise';
+        const potOdds = call / (pot + call);
+        return s >= potOdds + nerve ? 'call' : 'fold';
+      }
+      function aiTurn() {
+        if (over || toAct !== 1) return;
+        const g0 = gen;
+        busy = true;
+        paint();
+        setTimeout(() => {
+          if (gen !== g0 || !ctx.alive() || over || toAct !== 1) return;
+          busy = false;
+          act(1, decide());
+        }, 560 + Math.random() * 420);
+      }
+      function human(kind) {
+        if (phase !== 'play' || toAct !== 0 || busy) return;
+        hist.push(snap());
+        act(0, kind);
+      }
+      function snap() {
+        return {
+          bank: bank.slice(), deck: deck.slice(), board: board.slice(),
+          hole: hole.map(h => h.slice()), pot, bets: bets.slice(), street, button,
+          toAct, acted: acted.slice(), raises, allIn: allIn.slice(),
+          shown: shown.slice(), phase, msg, tone, over, recorded
+        };
+      }
+      function undo() {
+        const s = hist.pop();
+        if (!s) { setMsg('Nothing to roll back yet.', ''); paint(); return; }
+        gen++;
+        busy = false;
+        if (recorded && recorded !== s.recorded) { ctx.unrecord(recorded); }
+        bank = s.bank; deck = s.deck; board = s.board; hole = s.hole; pot = s.pot;
+        bets = s.bets; street = s.street; button = s.button; toAct = s.toAct;
+        acted = s.acted; raises = s.raises; allIn = s.allIn; shown = s.shown;
+        phase = s.phase; over = s.over; recorded = s.recorded;
+        saveBank();
+        setMsg('Rolled back.', '');
+        paint();
+        status('Your move', 'you');
+      }
+      function hint() {
+        if (!hole[0].length) { setMsg('Deal a hand first.', ''); paint(); return; }
+        const cards = hole[0].concat(board);
+        const call = phase === 'play' ? callFor(0) : 0;
+        let say;
+        if (cards.length < 5) {
+          const s = preScore(hole[0]);
+          say = s > 0.62 ? 'a premium pair of hole cards' : s > 0.45 ? 'a playable preflop hand' : 'a weak preflop hand';
+        } else {
+          say = 'you have ' + CATS[rank(cards)[0]].toLowerCase();
+        }
+        const why = call > 0 ? ' — ' + call + ' to call, pot ' + pot + '.' : ' — the check is free.';
+        setMsg('Hint: ' + say + why, '');
+        paint(); Sound.click();
+      }
+
+      window.__nxPoker = {
+        rank, cmp, cats: CATS,
+        get state() {
+          return {
+            phase, street, pot, bank: bank.slice(), bets: bets.slice(),
+            board: board.slice(), hole: hole.map(h => h.slice()),
+            toAct, over, button, raises, shown: shown.slice(), recorded
+          };
+        },
+        deal, human, undo, hint, snap,
+        aiStep(kind) { if (phase === 'play' && toAct === 1) { busy = false; act(1, kind || decide()); } },
+        setBank(v) { bank = v.slice(); saveBank(); paint(); }
+      };
+
+      setMsg('Everyone starts with ' + START + '. Blinds 10/20, heads-up.', '');
+      paint();
+      status('Deal a hand', 'you');
+      return { undo, hint };
+    }
+  };
+})();
+
+/* ============================================================
+   10. BIG TWO
    ============================================================ */
 const bigTwo = (() => {
   const RANKS = r => r === 11 ? 'J' : r === 12 ? 'Q' : r === 13 ? 'K' : r === 14 ? 'A' : r === 15 ? '2' : String(r);
@@ -2467,7 +2897,7 @@ const bigTwo = (() => {
 })();
 
 /* ============================================================
-   10. STICKMAN PARTY — five real-time duels, two players, one keyboard
+   11. STICKMAN PARTY — eight real-time duels, two players, one keyboard
    ============================================================ */
 const stickParty = (() => {
   const W = 720, H = 420;
@@ -2560,51 +2990,63 @@ const stickParty = (() => {
     c.restore();
   }
 
-  // x, y = feet centre; s = scale (1 ≈ 40px tall)
-  function man(c, x, y, s, color, o) {
-    const opt = o || {}, lean = opt.lean || 0, ph = opt.phase || 0;
-    const hip = y - 15 * s, shoulder = y - 30 * s, headY = y - 36 * s;
-    const lx = lean * 5 * s;
+  // the whole cast is a ball: x, y is the centre, r the radius.
+  // opt: alpha, glow:false, squash (-1 tall … +1 flat), spin (rolling phase)
+  function ball(c, x, y, r, color, o) {
+    const opt = o || {};
+    const sq = opt.squash || 0;
+    const rx = r * (1 + sq * 0.14), ry = r * (1 - sq * 0.14);
+    const a = opt.alpha == null ? 1 : opt.alpha;
     c.save();
-    c.globalAlpha = opt.alpha == null ? 1 : opt.alpha;
-    c.strokeStyle = color;
+    c.globalAlpha = a;
+    if (opt.glow !== false) neon(c, color, r * 1.5);
+    c.beginPath();
+    c.ellipse(x, y, rx, ry, 0, 0, 6.2832);
     c.fillStyle = color;
-    c.lineWidth = Math.max(1.5, 3 * s);
-    c.lineCap = 'round';
-    c.lineJoin = 'round';
-    if (opt.glow !== false) neon(c, color, 10 * s);
-    c.beginPath();
-    c.moveTo(x + lx * 0.3, hip);
-    c.lineTo(x + lx, shoulder);
-    c.stroke();
-    c.beginPath();
-    c.arc(x + lx * 1.22, headY, 6.2 * s, 0, 6.2832);
     c.fill();
-    const sw = Math.sin(ph) * 7 * s;
-    c.beginPath();
-    c.moveTo(x + lx, shoulder + s);
-    c.lineTo(x + lx + 9 * s, shoulder + 8 * s + sw);
-    c.moveTo(x + lx, shoulder + s);
-    c.lineTo(x + lx - 9 * s, shoulder + 8 * s - sw);
+    c.shadowBlur = 0;
+    // body shading: light from the top left, dark rim — a circle, not a sticker
+    const g = c.createRadialGradient(x - rx * 0.36, y - ry * 0.42, Math.max(1, r * 0.08),
+      x, y, Math.max(rx, ry));
+    g.addColorStop(0, 'rgba(255,255,255,.55)');
+    g.addColorStop(0.4, 'rgba(255,255,255,.1)');
+    g.addColorStop(0.8, 'rgba(0,0,0,.05)');
+    g.addColorStop(1, 'rgba(0,0,0,.4)');
+    c.fillStyle = g;
+    c.fill();
+    c.strokeStyle = 'rgba(255,255,255,.34)';
+    c.lineWidth = Math.max(1, r * 0.08);
     c.stroke();
-    const st = Math.sin(ph + 1.5708) * 7 * s;
+    // one dark mark that travels round the ball, so a moving ball reads as rolling
+    if (opt.spin) {
+      c.save();
+      c.beginPath();
+      c.ellipse(x, y, rx - 0.5, ry - 0.5, 0, 0, 6.2832);
+      c.clip();
+      c.globalAlpha = a * 0.5;
+      c.fillStyle = '#000';
+      c.beginPath();
+      c.arc(x + Math.cos(opt.spin) * rx * 0.5, y + Math.sin(opt.spin) * ry * 0.46,
+        r * 0.23, 0, 6.2832);
+      c.fill();
+      c.restore();
+    }
+    c.globalAlpha = a * 0.62;
+    c.fillStyle = '#fff';
     c.beginPath();
-    c.moveTo(x + lx * 0.3, hip);
-    c.lineTo(x + 8 * s + st * 0.6, y);
-    c.moveTo(x + lx * 0.3, hip);
-    c.lineTo(x - 8 * s - st * 0.6, y);
-    c.stroke();
+    c.ellipse(x - rx * 0.32, y - ry * 0.4, r * 0.19, r * 0.13, -0.6, 0, 6.2832);
+    c.fill();
     c.restore();
   }
 
-  // a dim crowd along the top of the cabinet screen
+  // a dim crowd along the top of the cabinet screen: rows of small balls
   function crowd(c, tick) {
     const n = 9, span = W - 96;
     for (let i = 0; i < n; i++) {
       const x = 48 + i * (span / (n - 1));
-      const bob = Math.sin(tick * 2.1 + i * 1.7) * 2.4;
-      man(c, x, 52 + bob, 0.66, i % 2 ? ICE : GOLD,
-        { phase: tick * 3 + i * 1.3, glow: false, alpha: 0.16 + (i % 3) * 0.03 });
+      const bob = Math.abs(Math.sin(tick * 2.1 + i * 1.7)) * 3.4;
+      ball(c, x, 46 + bob, 6.5, i % 2 ? ICE : GOLD,
+        { spin: tick * 2 + i, glow: false, alpha: 0.17 + (i % 3) * 0.03 });
     }
   }
 
@@ -2646,39 +3088,24 @@ const stickParty = (() => {
     c.restore();
   }
 
-  // dir = +1 when the rope is to the right of the figure
+  // dir = +1 when the rope is to the right of the ball
   function puller(c, x, y, dir, color, strain, phase) {
-    const back = -dir;
-    const lean = (8 + strain * 7) * back;
+    const R = 17;
+    const lean = (5 + strain * 9) * dir;
     const wob = Math.sin(phase * 9) * strain * 1.8;
-    const hipX = x + lean * 0.45 + wob, hipY = y - 36;
-    const shX = x + lean + wob, shY = y - 74;
-    shadow(c, x, y, 20);
+    const cx = x + lean + wob, cy = y - R;
+    shadow(c, x + lean * 0.5, y, 19);
     c.save();
     c.strokeStyle = color;
-    c.fillStyle = color;
-    c.lineWidth = 4;
+    c.lineWidth = 3.4;
     c.lineCap = 'round';
-    c.lineJoin = 'round';
-    neon(c, color, 12);
+    neon(c, color, 10);
     c.beginPath();
-    c.moveTo(hipX, hipY);
-    c.lineTo(shX, shY);
-    c.stroke();
-    c.beginPath();
-    c.arc(shX + back * 4, shY - 10, 7.4, 0, 6.2832);
-    c.fill();
-    c.beginPath();
-    c.moveTo(shX, shY + 5);
-    c.lineTo(shX + dir * 30, 302);
-    c.stroke();
-    c.beginPath();
-    c.moveTo(hipX, hipY);
-    c.lineTo(x + back * 27, y);
-    c.moveTo(hipX, hipY);
-    c.lineTo(x + dir * 18, y);
+    c.moveTo(cx + dir * R * 0.62, cy - R * 0.22);
+    c.lineTo(cx + dir * (R + 13), 302);
     c.stroke();
     c.restore();
+    ball(c, cx, cy, R, color, { spin: phase * 6, squash: 0.35 + strain * 0.5 });
   }
 
   function veilFill(c, alpha) {
@@ -2736,10 +3163,15 @@ const stickParty = (() => {
     c.arc(W / 2, H / 2 + 6, 150, 0, 6.2832);
     c.stroke();
     c.restore();
+    const hopA = Math.abs(Math.sin(tick * 3.4)), hopB = Math.abs(Math.sin(tick * 3.4 + 1.1));
     c.save();
-    c.globalAlpha = 0.8;
-    man(c, 128, 372, 2.2, GOLD, { phase: tick * 4.2, lean: 0.35 });
-    man(c, 592, 372, 2.2, ICE, { phase: -tick * 4.2, lean: -0.35 });
+    c.globalAlpha = 0.85;
+    shadow(c, 128, 372, 28 - hopA * 8);
+    shadow(c, 592, 372, 28 - hopB * 8);
+    ball(c, 128, 372 - 30 - hopA * 26, 30, GOLD,
+      { spin: tick * 3.2, squash: (1 - hopA) * 0.9 });
+    ball(c, 592, 372 - 30 - hopB * 26, 30, ICE,
+      { spin: -tick * 3.2, squash: (1 - hopB) * 0.9 });
     c.restore();
     tracked(c, '1 CREDIT', 78, 398, 9, '#6f8087', 2, '400', MONO);
     tracked(c, '2 PLAYERS', W - 78, 398, 9, '#6f8087', 2, '400', MONO);
@@ -2864,9 +3296,9 @@ const stickParty = (() => {
           });
           S.pl.forEach((p, i) => {
             if (!p.alive) return;
-            shadow(c, p.x, p.y + 17, 16);
-            man(c, p.x, p.y + 17, 1.2, p.color, { phase: p.step });
-            tracked(c, PL[i].name, p.x, p.y - 36, 11, p.color, 2, '700', MONO, 8);
+            shadow(c, p.x, p.y + PR, 16);
+            ball(c, p.x, p.y, PR - 2, p.color, { spin: p.step });
+            tracked(c, PL[i].name, p.x, p.y - PR - 11, 11, p.color, 2, '700', MONO, 8);
           });
         }
       };
@@ -2876,7 +3308,7 @@ const stickParty = (() => {
   /* ---------- 2. anvils ---------- */
   const RAIN = {
     id: 'rain', name: 'Anvils',
-    hint: 'The shadow is where an anvil lands. Last stickman standing takes it.',
+    hint: 'The shadow is where an anvil lands. Last ball standing takes it.',
     make(S) {
       const B = { x: 44, y: 70, w: 632, h: 314 };
       const st = { t: 0, next: 0.85, drops: [], hits: [] };
@@ -2936,7 +3368,7 @@ const stickParty = (() => {
           const alive = S.pl.filter(p => p.alive);
           if (alive.length < 2) {
             S.finish(alive.length === 1 ? S.pl.indexOf(alive[0]) : null,
-              alive.length === 1 ? 'Last stickman standing' : 'Both flattened');
+              alive.length === 1 ? 'Last ball standing' : 'Both flattened');
             return;
           }
           if (st.t > 16) S.finish(null, 'Both survived the shower');
@@ -3010,9 +3442,9 @@ const stickParty = (() => {
               tracked(c, PL[i].name + ' OUT', p.x, p.y - 8, 10, '#6f8087', 2, '700', MONO, 6);
               return;
             }
-            shadow(c, p.x, p.y, 16);
-            man(c, p.x, p.y, 1.15, p.color, { phase: p.step });
-            tracked(c, PL[i].name, p.x, p.y - 50, 11, p.color, 2, '700', MONO, 8);
+            shadow(c, p.x, p.y + 13, 16);
+            ball(c, p.x, p.y, 14, p.color, { spin: p.step });
+            tracked(c, PL[i].name, p.x, p.y - 26, 11, p.color, 2, '700', MONO, 8);
           });
         }
       };
@@ -3024,39 +3456,52 @@ const stickParty = (() => {
     id: 'race', name: 'The run',
     hint: 'Left and right to dodge the barriers. First to the line wins.',
     make(S) {
-      const GOAL = 2600, SPEED = 168, OBS = 300, TOP = 92, BOT = 380;
+      // the runner moves at SPEED, the world (barriers) at OBS = the same speed,
+      // so a barrier is on screen for (352 - 86) / OBS ≈ 0.78 s … 1.05 s before it
+      // reaches you. Crossing one lane costs w * 0.32 / CROSS ≈ 0.23 s, and the
+      // spawner never opens a gap more than one lane from the last one, so every
+      // barrier can be cleared by a single lane change inside that window.
+      const GOAL = 3400, SPEED = 330, OBS = 340, TOP = 92, BOT = 380;
+      const CROSS = 430, R = 13, LANE_W = 0.24, LANES = [0.18, 0.5, 0.82];
       const tracks = [0, 1].map(i => ({
-        x: i ? 380 : 30, w: 310, obs: [], next: 0.55 + i * 0.26, dist: 0, stun: 0
+        x: i ? 380 : 30, w: 310, obs: [], next: 0.55 + i * 0.26, dist: 0, stun: 0, free: null
       }));
-      const laneX = (tr, lane) => tr.x + tr.w * [0.18, 0.5, 0.82][lane];
+      const laneX = (tr, lane) => tr.x + tr.w * LANES[lane];
       S.pl.forEach((p, i) => {
         p.x = tracks[i].x + tracks[i].w / 2;
         p.y = 352; p.alive = true; p.hit = 0; p.step = 0;
       });
+      // a barrier row always leaves at least one lane open, and that gap is never
+      // more than one lane away from the previous row's gap: dodgeable by design
+      function spawn(tr) {
+        const from = tr.free == null ? [0, 1, 2]
+          : [0, 1, 2].filter(l => Math.abs(l - tr.free) <= 1);
+        const free = pick(from);
+        tr.free = free;
+        const others = [0, 1, 2].filter(l => l !== free);
+        const lanes = Math.random() < 0.45 ? others : [pick(others)];
+        lanes.forEach(l => tr.obs.push({ cx: laneX(tr, l), y: TOP - 6, w: tr.w * LANE_W }));
+      }
       function step(i, dt) {
         const tr = tracks[i], p = S.pl[i];
         const dir = (S.held(i, 'right') ? 1 : 0) - (S.held(i, 'left') ? 1 : 0);
-        p.x = clamp(p.x + dir * (tr.stun > 0 ? 92 : 232) * dt, tr.x + 18, tr.x + tr.w - 18);
-        p.step += Math.abs(dir) * dt * 9;
+        p.x = clamp(p.x + dir * (tr.stun > 0 ? 140 : CROSS) * dt, tr.x + 18, tr.x + tr.w - 18);
+        p.step += Math.abs(dir) * dt * 14;
         if (tr.stun > 0) tr.stun -= dt; else tr.dist += SPEED * dt;
         if (p.hit > 0) p.hit -= dt;
         tr.next -= dt;
         if (tr.next <= 0) {
-          const order = [0, 1, 2].sort(() => Math.random() - 0.5);
-          const n = Math.random() < 0.34 ? 2 : 1;
-          for (let k = 0; k < n; k++) {
-            tr.obs.push({ cx: laneX(tr, order[k]), y: TOP - 6, w: tr.w * 0.24 });
-          }
-          tr.next = Math.max(0.36, 0.68 - tr.dist / GOAL * 0.26);
+          spawn(tr);
+          tr.next = Math.max(0.42, 0.72 - tr.dist / GOAL * 0.26);
         }
         tr.obs.forEach(o => { o.y += OBS * dt; });
         if (tr.stun <= 0 && p.hit <= 0) {
           for (const o of tr.obs) {
-            if (Math.abs(o.y - p.y) < 15 && Math.abs(o.cx - p.x) < o.w / 2 + 9) {
-              tr.stun = 0.72;
+            if (Math.abs(o.y - p.y) < 21 && Math.abs(o.cx - p.x) < o.w / 2 + R) {
+              tr.stun = 0.6;
               tr.dist = Math.max(0, tr.dist - 90);
               p.hit = 1.1;
-              p.x = clamp(p.x + (p.x < o.cx ? -26 : 26), tr.x + 18, tr.x + tr.w - 18);
+              p.x = clamp(p.x + (p.x < o.cx ? -62 : 62), tr.x + 18, tr.x + tr.w - 18);
               Sound.capture();
               break;
             }
@@ -3126,8 +3571,8 @@ const stickParty = (() => {
             });
             const blink = p.hit > 0 && Math.floor(p.hit * 12) % 2 === 0;
             if (!blink) {
-              shadow(c, p.x, p.y, 15);
-              man(c, p.x, p.y, 1.15, p.color, { phase: p.step, alpha: tr.stun > 0 ? 0.5 : 1 });
+              shadow(c, p.x, p.y + R, 15);
+              ball(c, p.x, p.y, R, p.color, { spin: p.step, alpha: tr.stun > 0 ? 0.55 : 1 });
             }
             c.save();
             c.fillStyle = 'rgba(6,9,12,.74)';
@@ -3307,8 +3752,8 @@ const stickParty = (() => {
           c.restore();
           shadow(c, 250, 340, 20);
           shadow(c, 470, 340, 20);
-          man(c, 250, 340, 1.5, GOLD, { lean: 0.5, phase: 0 });
-          man(c, 470, 340, 1.5, ICE, { lean: -0.5, phase: 0 });
+          ball(c, 250, 323, 17, GOLD, { squash: 0.35 });
+          ball(c, 470, 323, 17, ICE, { squash: 0.35 });
           tracked(c, 'P1', 250, 372, 12, GOLD, 2, '700', MONO, 8);
           tracked(c, 'P2', 470, 372, 12, ICE, 2, '700', MONO, 8);
           if (st.lit && !st.over) tracked(c, 'DRAW!', lx, 250, 32, MAG, 5, '800', SANS, 22);
@@ -3320,7 +3765,431 @@ const stickParty = (() => {
     }
   };
 
-  const GAME_LIST = [RING, RAIN, RACE, TUG, DRAW];
+  /* ---------- 6. paint war ---------- */
+  const PAINT = {
+    id: 'paint', name: 'Paint war',
+    hint: 'Run over the floor to claim it. Most tiles when the light dies wins.',
+    make(S) {
+      const B = { x: 40, y: 76, w: 640, h: 280 }, CELL = 40;
+      const COLS = B.w / CELL, ROWS = B.h / CELL;
+      const st = { t: 0, limit: 18, grid: new Int8Array(COLS * ROWS).fill(-1), score: [0, 0], blip: 0, B, COLS, ROWS };
+      S.pl.forEach((p, i) => {
+        p.x = B.x + B.w * (i ? 0.72 : 0.28); p.y = B.y + B.h * 0.5;
+        p.vx = p.vy = 0; p.alive = true; p.step = 0;
+      });
+      function move(p, i, dt) {
+        const tx = ((S.held(i, 'right') ? 1 : 0) - (S.held(i, 'left') ? 1 : 0)) * 212;
+        const ty = ((S.held(i, 'down') ? 1 : 0) - (S.held(i, 'up') ? 1 : 0)) * 212;
+        const k = Math.min(1, dt * 14);
+        p.vx += (tx - p.vx) * k;
+        p.vy += (ty - p.vy) * k;
+        p.x = clamp(p.x + p.vx * dt, B.x + 12, B.x + B.w - 12);
+        p.y = clamp(p.y + p.vy * dt, B.y + 12, B.y + B.h - 12);
+        p.step += Math.hypot(p.vx, p.vy) * dt * 0.1;
+      }
+      function claim(i) {
+        const p = S.pl[i];
+        const cx = Math.floor((p.x - B.x) / CELL), cy = Math.floor((p.y - B.y) / CELL);
+        if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) return;
+        const k = cy * COLS + cx;
+        if (st.grid[k] === i) return;
+        if (st.grid[k] >= 0) st.score[st.grid[k]]--;
+        st.grid[k] = i;
+        st.score[i]++;
+        if (st.blip <= 0) { Sound.chip(); st.blip = 0.11; }
+      }
+      return {
+        st, B, COLS, ROWS,
+        update(dt) {
+          st.t += dt;
+          st.blip -= dt;
+          S.pl.forEach((p, i) => {
+            if (!p.alive) return;
+            move(p, i, dt);
+            claim(i);
+          });
+          if (st.t >= st.limit) {
+            const d = st.score[0] - st.score[1];
+            S.finish(d === 0 ? null : (d > 0 ? 0 : 1),
+              d === 0 ? 'A dead heat' : st.score[0] + ' tiles to ' + st.score[1]);
+          }
+        },
+        draw(c) {
+          floor(c);
+          crowd(c, st.t);
+          c.save();
+          c.fillStyle = '#080d12';
+          rr(c, B.x - 4, B.y - 4, B.w + 8, B.h + 8, 10);
+          c.fill();
+          c.strokeStyle = 'rgba(110,231,255,.34)';
+          c.lineWidth = 1.5;
+          neon(c, ICE, 12);
+          c.stroke();
+          c.restore();
+          const tints = ['rgba(255,207,92,', 'rgba(110,231,255,'];
+          for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+              const owner = st.grid[y * COLS + x];
+              const px = B.x + x * CELL, py = B.y + y * CELL;
+              c.save();
+              if (owner >= 0) {
+                c.fillStyle = tints[owner] + '0.2)';
+                c.fillRect(px + 1, py + 1, CELL - 2, CELL - 2);
+                c.strokeStyle = tints[owner] + '0.42)';
+                c.lineWidth = 1;
+                neon(c, owner ? ICE : GOLD, 7);
+                c.strokeRect(px + 1.5, py + 1.5, CELL - 3, CELL - 3);
+              } else {
+                c.strokeStyle = 'rgba(255,255,255,.05)';
+                c.lineWidth = 1;
+                c.strokeRect(px + 0.5, py + 0.5, CELL - 1, CELL - 1);
+              }
+              c.restore();
+            }
+          }
+          S.pl.forEach((p, i) => {
+            shadow(c, p.x, p.y + 13, 15);
+            ball(c, p.x, p.y, 13, p.color, { spin: p.step });
+            tracked(c, PL[i].name, p.x, p.y - 24, 11, p.color, 2, '700', MONO, 8);
+          });
+          const left = clamp(1 - st.t / st.limit, 0, 1);
+          c.save();
+          c.fillStyle = 'rgba(255,255,255,.09)';
+          rr(c, B.x, B.y + B.h + 16, B.w, 7, 3.5);
+          c.fill();
+          c.fillStyle = left < 0.25 ? MAG : GOLD;
+          neon(c, left < 0.25 ? MAG : GOLD, 10);
+          rr(c, B.x, B.y + B.h + 16, Math.max(2, B.w * left), 7, 3.5);
+          c.fill();
+          c.restore();
+          c.save();
+          c.fillStyle = 'rgba(6,9,12,.74)';
+          rr(c, 250, B.y + B.h + 30, 220, 24, 12);
+          c.fill();
+          c.restore();
+          tracked(c, st.score[0] + '  –  ' + st.score[1], W / 2, B.y + B.h + 42, 12,
+            st.score[0] === st.score[1] ? INK : (st.score[0] > st.score[1] ? GOLD : ICE),
+            3, '700', MONO, 7);
+        }
+      };
+    }
+  };
+
+  /* ---------- 7. trail ---------- */
+  const TRAIL = {
+    id: 'trail', name: 'Trail',
+    hint: 'Eat the pellets, grow longer, and make the other one crash first.',
+    make(S) {
+      const COLS = 21, ROWS = 11, CELL = 30, OX = 45, OY = 58, LIMIT = 30;
+      const st = {
+        t: 0, acc: 0, iv: 0.13, over: false,
+        seg: [[], []], dir: [{ x: 1, y: 0 }, { x: -1, y: 0 }],
+        grow: [0, 0], pellets: []
+      };
+      const kOf = (x, y) => y * COLS + x;
+      for (let k = 0; k < 4; k++) {
+        st.seg[0].push({ x: 3 - k, y: 5 });
+        st.seg[1].push({ x: COLS - 4 + k, y: 5 });
+      }
+      function spawnPellet() {
+        for (let tries = 0; tries < 240; tries++) {
+          const x = 1 + Math.floor(Math.random() * (COLS - 2));
+          const y = 1 + Math.floor(Math.random() * (ROWS - 2));
+          const busy = st.pellets.some(p => p.x === x && p.y === y) ||
+            st.seg[0].some(s => s.x === x && s.y === y) ||
+            st.seg[1].some(s => s.x === x && s.y === y);
+          if (!busy) { st.pellets.push({ x, y, t: 0 }); return; }
+        }
+      }
+      while (st.pellets.length < 2) spawnPellet();
+      function steer(i) {
+        const d = st.dir[i];
+        const want = [];
+        if (S.held(i, 'up')) want.push({ x: 0, y: -1 });
+        if (S.held(i, 'down')) want.push({ x: 0, y: 1 });
+        if (S.held(i, 'left')) want.push({ x: -1, y: 0 });
+        if (S.held(i, 'right')) want.push({ x: 1, y: 0 });
+        for (const v of want) if (v.x !== -d.x || v.y !== -d.y) return v;
+        return d;
+      }
+      function tick() {
+        const heads = [0, 1].map(i => {
+          const d = steer(i), h = st.seg[i][0];
+          return { x: h.x + d.x, y: h.y + d.y, d };
+        });
+        const occ = new Set();
+        [0, 1].forEach(i => {
+          const keep = st.seg[i].length - (st.grow[i] > 0 ? 0 : 1);
+          for (let k = 0; k < keep; k++) occ.add(kOf(st.seg[i][k].x, st.seg[i][k].y));
+        });
+        const dead = [false, false];
+        heads.forEach((h, i) => {
+          st.dir[i] = h.d;
+          if (h.x < 0 || h.y < 0 || h.x >= COLS || h.y >= ROWS) dead[i] = true;
+          else if (occ.has(kOf(h.x, h.y))) dead[i] = true;
+        });
+        if (heads[0].x === heads[1].x && heads[0].y === heads[1].y) {
+          if (!dead[0] || !dead[1]) Sound.capture();
+          dead[0] = dead[1] = true;
+        }
+        heads.forEach((h, i) => {
+          st.seg[i].unshift({ x: h.x, y: h.y });
+          const at = st.pellets.findIndex(p => p.x === h.x && p.y === h.y);
+          if (at >= 0) {
+            st.pellets.splice(at, 1);
+            st.grow[i] += 1;
+            Sound.chip();
+            spawnPellet();
+          }
+          if (st.grow[i] > 0) st.grow[i] -= 1; else st.seg[i].pop();
+        });
+        if (dead[0] || dead[1]) {
+          st.over = true;
+          Sound.drop();
+          S.finish(dead[0] && dead[1] ? null : (dead[0] ? 1 : 0), 'Head first into trouble');
+        }
+      }
+      return {
+        st, COLS, ROWS, CELL, OX, OY,
+        update(dt) {
+          if (st.over) return;
+          st.t += dt;
+          st.acc += dt;
+          st.pellets.forEach(p => { p.t += dt; });
+          while (st.acc >= st.iv && !st.over) {
+            st.acc -= st.iv;
+            tick();
+          }
+          if (!st.over && st.t > LIMIT) {
+            const a = st.seg[0].length, b = st.seg[1].length;
+            st.over = true;
+            S.finish(a === b ? null : (a > b ? 0 : 1), 'Longest trail at the buzzer');
+          }
+        },
+        draw(c) {
+          floor(c);
+          crowd(c, st.t);
+          c.save();
+          c.fillStyle = '#080d12';
+          rr(c, OX - 6, OY - 6, COLS * CELL + 12, ROWS * CELL + 12, 12);
+          c.fill();
+          c.strokeStyle = 'rgba(110,231,255,.34)';
+          c.lineWidth = 1.5;
+          neon(c, ICE, 12);
+          c.stroke();
+          c.shadowBlur = 0;
+          c.fillStyle = 'rgba(255,255,255,.05)';
+          for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+              c.beginPath();
+              c.arc(OX + x * CELL + CELL / 2, OY + y * CELL + CELL / 2, 1.5, 0, 6.2832);
+              c.fill();
+            }
+          }
+          c.restore();
+          st.pellets.forEach(p => {
+            const pulse = 0.6 + 0.4 * Math.sin(p.t * 6);
+            c.save();
+            c.fillStyle = GOLD;
+            neon(c, GOLD, 12 * pulse);
+            c.beginPath();
+            c.arc(OX + p.x * CELL + CELL / 2, OY + p.y * CELL + CELL / 2, 5 + pulse * 1.6, 0, 6.2832);
+            c.fill();
+            c.restore();
+          });
+          [1, 0].forEach(i => {
+            const segs = st.seg[i], col = PL[i].color;
+            c.save();
+            segs.forEach((s, k) => {
+              const fade = k === 0 ? 1 : clamp(1 - k / (segs.length + 5), 0.25, 0.9);
+              c.globalAlpha = fade;
+              c.fillStyle = col;
+              neon(c, col, k === 0 ? 14 : 6);
+              rr(c, OX + s.x * CELL + 3, OY + s.y * CELL + 3, CELL - 6, CELL - 6, 5);
+              c.fill();
+            });
+            c.restore();
+            const h = segs[0];
+            c.save();
+            c.strokeStyle = INK;
+            c.lineWidth = 1.2;
+            c.globalAlpha = 0.55;
+            rr(c, OX + h.x * CELL + 6.5, OY + h.y * CELL + 6.5, CELL - 13, CELL - 13, 3);
+            c.stroke();
+            c.restore();
+          });
+          // lengths live at the top centre: the vignette eats the bottom corners
+          c.save();
+          c.fillStyle = 'rgba(6,9,12,.8)';
+          rr(c, W / 2 - 92, 12, 184, 28, 14);
+          c.fill();
+          c.strokeStyle = 'rgba(110,231,255,.22)';
+          c.lineWidth = 1;
+          c.stroke();
+          c.restore();
+          tracked(c, 'P1 ' + st.seg[0].length, W / 2 - 60, 26, 11.5, GOLD, 2, '700', MONO, 0);
+          tracked(c, 'P2 ' + st.seg[1].length, W / 2 + 60, 26, 11.5, ICE, 2, '700', MONO, 0);
+        }
+      };
+    }
+  };
+
+  /* ---------- 8. rally ---------- */
+  const RALLY = {
+    id: 'rally', name: 'Rally',
+    hint: 'Up and down to hold your line. Three points takes the round.',
+    make(S) {
+      const B = { x: 44, y: 96, w: 632, h: 272 }, PW = 9, PH = 64, WIN = 3, LIMIT = 45;
+      const midY = B.y + B.h / 2;
+      const st = {
+        t: 0, wait: 0.9, score: [0, 0], rally: 0,
+        pad: [midY, midY],
+        ball: { x: W / 2, y: midY, vx: 0, vy: 0, r: 7 },
+        serve: null, flash: 0, B
+      };
+      function serve(to) {
+        const sp = 300, a = Math.random() * 0.62 - 0.31;
+        st.ball.x = W / 2;
+        st.ball.y = midY + (Math.random() * 70 - 35);
+        st.ball.vx = (to === 0 ? -1 : 1) * sp * Math.cos(a);
+        st.ball.vy = sp * Math.sin(a);
+        st.rally = 0;
+      }
+      function bounce(i) {
+        const b = st.ball;
+        const sp = Math.min(780, Math.hypot(b.vx, b.vy) * 1.05);
+        const rel = clamp((b.y - st.pad[i]) / (PH / 2), -1, 1);
+        const ang = rel * 0.95;
+        const dir = i === 0 ? 1 : -1;
+        b.vx = dir * sp * Math.cos(ang);
+        b.vy = sp * Math.sin(ang);
+        b.x = i === 0 ? B.x + 16 + PW + b.r + 0.5 : B.x + B.w - 16 - PW - b.r - 0.5;
+        st.rally++;
+        Sound.chip();
+        st.flash = 0.16;
+      }
+      function point(who) {
+        st.score[who]++;
+        Sound.capture();
+        st.wait = 0.9;
+        st.ball.x = W / 2;
+        st.ball.y = midY;
+        st.ball.vx = 0;
+        st.ball.vy = 0;
+        st.serve = who === 0 ? 1 : 0;
+        st.rally = 0;
+      }
+      return {
+        st, B, PH, WIN,
+        update(dt) {
+          st.t += dt;
+          st.flash = Math.max(0, st.flash - dt);
+          for (let i = 0; i < 2; i++) {
+            const d = (S.held(i, 'down') ? 1 : 0) - (S.held(i, 'up') ? 1 : 0);
+            st.pad[i] = clamp(st.pad[i] + d * 330 * dt, B.y + PH / 2 + 6, B.y + B.h - PH / 2 - 6);
+          }
+          if (st.wait > 0) {
+            st.wait -= dt;
+            if (st.wait <= 0) serve(st.serve == null ? 0 : st.serve);
+            return;
+          }
+          const b = st.ball;
+          const steps = Math.max(1, Math.ceil(Math.hypot(b.vx, b.vy) * dt / 6));
+          for (let s = 0; s < steps; s++) {
+            const sdt = dt / steps;
+            b.x += b.vx * sdt;
+            b.y += b.vy * sdt;
+            if (b.y - b.r < B.y) { b.y = B.y + b.r; b.vy = Math.abs(b.vy); }
+            if (b.y + b.r > B.y + B.h) { b.y = B.y + B.h - b.r; b.vy = -Math.abs(b.vy); }
+            const lx = B.x + 16, rx = B.x + B.w - 16 - PW;
+            if (b.vx < 0 && b.x - b.r <= lx + PW && b.x + b.r >= lx &&
+                Math.abs(b.y - st.pad[0]) < PH / 2 + b.r && b.x > B.x) bounce(0);
+            if (b.vx > 0 && b.x + b.r >= rx && b.x - b.r <= rx + PW &&
+                Math.abs(b.y - st.pad[1]) < PH / 2 + b.r && b.x < B.x + B.w) bounce(1);
+          }
+          if (b.x < B.x - 22) point(1);
+          else if (b.x > B.x + B.w + 22) point(0);
+          if (st.score[0] >= WIN || st.score[1] >= WIN) {
+            const who = st.score[0] >= WIN ? 0 : 1;
+            S.finish(who, st.score[0] + ' – ' + st.score[1]);
+            return;
+          }
+          if (st.t > LIMIT) {
+            const d = st.score[0] - st.score[1];
+            S.finish(d === 0 ? null : (d > 0 ? 0 : 1), 'Time on the court');
+          }
+        },
+        draw(c) {
+          floor(c);
+          crowd(c, st.t);
+          c.save();
+          c.fillStyle = '#080d12';
+          rr(c, B.x, B.y, B.w, B.h, 12);
+          c.fill();
+          c.strokeStyle = 'rgba(110,231,255,.34)';
+          c.lineWidth = 1.5;
+          neon(c, ICE, 12);
+          c.stroke();
+          c.shadowBlur = 0;
+          c.strokeStyle = 'rgba(110,231,255,.22)';
+          c.setLineDash([9, 11]);
+          c.lineWidth = 1.4;
+          c.beginPath();
+          c.moveTo(W / 2, B.y + 6);
+          c.lineTo(W / 2, B.y + B.h - 6);
+          c.stroke();
+          c.setLineDash([]);
+          c.beginPath();
+          c.arc(W / 2, B.y + B.h / 2, 42, 0, 6.2832);
+          c.stroke();
+          c.restore();
+          [0, 1].forEach(i => {
+            const x = i ? B.x + B.w - 16 - PW : B.x + 16;
+            const col = PL[i].color;
+            c.save();
+            c.fillStyle = col;
+            neon(c, col, st.flash > 0 ? 22 : 12);
+            rr(c, x, st.pad[i] - PH / 2, PW, PH, 4.5);
+            c.fill();
+            c.restore();
+            c.save();
+            c.strokeStyle = col;
+            c.globalAlpha = 0.3;
+            c.lineWidth = 2;
+            c.beginPath();
+            c.moveTo(i ? B.x + B.w - 14 : B.x + 14, B.y + 4);
+            c.lineTo(i ? B.x + B.w - 14 : B.x + 14, B.y + B.h - 4);
+            c.stroke();
+            c.restore();
+          });
+          const b = st.ball;
+          c.save();
+          c.fillStyle = INK;
+          neon(c, GOLD, 18);
+          c.beginPath();
+          c.arc(b.x, b.y, b.r, 0, 6.2832);
+          c.fill();
+          c.restore();
+          c.save();
+          c.fillStyle = 'rgba(6,9,12,.8)';
+          rr(c, W / 2 - 74, 50, 148, 32, 16);
+          c.fill();
+          c.strokeStyle = 'rgba(110,231,255,.22)';
+          c.lineWidth = 1;
+          c.stroke();
+          c.restore();
+          tracked(c, st.score[0] + '  –  ' + st.score[1], W / 2, 66, 16,
+            st.score[0] === st.score[1] ? INK : (st.score[0] > st.score[1] ? GOLD : ICE),
+            3, '700', MONO, 9);
+          if (st.rally > 2 && st.wait <= 0) {
+            tracked(c, st.rally + ' HIT RALLY', W / 2, B.y + 18, 9.5, MAG, 2, '400', MONO, 7);
+          }
+        }
+      };
+    }
+  };
+
+  const GAME_LIST = [RING, RAIN, RACE, TUG, DRAW, PAINT, TRAIL, RALLY];
 
   /* ---------- the match ---------- */
   function mount(ctx) {
@@ -3344,7 +4213,7 @@ const stickParty = (() => {
     const wrap = mk('div', 'sp');
     const hud = mk('div', 'sp-hud');
     hud.innerHTML = '<span class="sp-p1"><b>0</b> P1</span>' +
-      '<span class="sp-mid">stickman party</span>' +
+      '<span class="sp-mid">ball party</span>' +
       '<span class="sp-p2">P2 <b>0</b></span>';
     const p1num = $('.sp-p1 b', hud);
     const p2num = $('.sp-p2 b', hud);
@@ -3354,7 +4223,7 @@ const stickParty = (() => {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     canvas.width = Math.round(W * dpr);
     canvas.height = Math.round(H * dpr);
-    canvas.setAttribute('aria-label', 'Stickman Party arena');
+    canvas.setAttribute('aria-label', 'Ball Party arena');
     const c = canvas.getContext('2d');
     const keys = mk('div', 'sp-keys');
     keys.innerHTML = '<span class="sp-p1">P1</span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>' +
@@ -3375,9 +4244,9 @@ const stickParty = (() => {
 
     const veil = mk('div', 'sp-veil');
     const cardEl = mk('div', 'sp-card');
-    cardEl.innerHTML = '<h4>Stickman Party</h4>' +
-      '<p>Five quick duels, best of five. P1 has <b>WASD</b>, P2 has the arrow keys — ' +
-      'no turn waiting, just reflexes.</p>';
+    cardEl.innerHTML = '<h4>Ball Party</h4>' +
+      '<p>Eight quick duels, five drawn each match, best of five. P1 has <b>WASD</b>, ' +
+      'P2 has the arrow keys — no turn waiting, just reflexes.</p>';
     const startBtn = mk('button', 'btn primary', 'Press start');
     startBtn.type = 'button';
     cardEl.appendChild(startBtn);
@@ -3404,7 +4273,7 @@ const stickParty = (() => {
 
     function startMatch() {
       scores = [0, 0];
-      rounds = shuffle(GAME_LIST.slice());
+      rounds = shuffle(GAME_LIST.slice()).slice(0, 5);
       roundIx = -1;
       lastWinner = null;
       lastNote = '';
@@ -3465,7 +4334,9 @@ const stickParty = (() => {
       crt(c);
     }
 
-    function advance(dt) {
+    // update only: no paint. The rAF loop always paints; this exists so a test
+    // can simulate thousands of frames of game logic at full speed.
+    function simulate(dt) {
       tick += dt;
       if (paused) {
         fresh = [];
@@ -3481,6 +4352,10 @@ const stickParty = (() => {
         resultT -= dt;
         if (resultT <= 0) nextRound();
       }
+    }
+
+    function advance(dt) {
+      simulate(dt);
       paint();
     }
 
@@ -3550,9 +4425,16 @@ const stickParty = (() => {
       get note() { return lastNote; },
       pl,
       inst: () => inst,
-      // test hook: advance the match by hand, so a throttled/occluded WebView
-      // (rAF stopped) still runs at exactly the pace the test expects
-      step(ms) { if (!stopped) advance((ms || 16) / 1000); },
+      // test hooks: advance the match by hand, so a throttled/occluded WebView
+      // (rAF stopped) still runs at exactly the pace the test expects.
+      // step(ms) runs the frame the rAF loop runs, paint included; step(ms, false)
+      // runs the same update with no repaint, for long simulations (the canvas
+      // costs ~20 ms a frame, which makes a thousand-frame pilot take 20 s).
+      step(ms, paintFrame) {
+        if (stopped) return;
+        const dt = (ms || 16) / 1000;
+        if (paintFrame === false) simulate(dt); else advance(dt);
+      },
       start(ids) {
         rounds = ids.map(id => GAME_LIST.filter(g => g.id === id)[0]).filter(Boolean);
         roundIx = -1;
@@ -3566,18 +4448,19 @@ const stickParty = (() => {
     };
 
     paintHud();
-    ctx.setStatus('Stickman Party — press start', 'you');
+    ctx.setStatus('Ball Party — press start', 'you');
     raf = requestAnimationFrame(frame);
     return {};
   }
 
   return {
     id: 'sp',
-    name: 'Stickman Party',
+    name: 'Ball Party',
     tag: 'two players, one keyboard',
-    blurb: 'Five real-time duels — shove, dodge, run, pull, draw. Same keyboard, no internet.',
-    rules: 'Best of five duels in shuffled order: Ring out, Anvils, The run, ' +
-      'Tug of war and Quick draw. P1 uses W A S D, P2 uses the arrow keys. ' +
+    blurb: 'Eight real-time duels — shove, dodge, run, pull, draw, paint, grow, rally. Same keyboard, no internet.',
+    rules: 'Eight duels, five of them drawn at random per match, best of five. The set: Ring out, ' +
+      'Anvils, The run, Tug of war, Quick draw, Paint war, Trail and Rally. ' +
+      'P1 uses W A S D, P2 uses the arrow keys. ' +
       'Most round wins takes the match; a tie gets one more round. Nothing here waits its turn, ' +
       'so both pairs of hands stay on the keyboard.',
     hideMode: true,
@@ -3590,7 +4473,7 @@ const stickParty = (() => {
 /* ============================================================
    shell
    ============================================================ */
-const GAMES = [ticTacToe, connectFour, reversi, checkers, chess, gomoku, mancala, blackjack, bigTwo, stickParty];
+const GAMES = [ticTacToe, connectFour, reversi, checkers, chess, gomoku, mancala, blackjack, bigTwo, poker, stickParty];
 const screenEl = $('#screen');
 const muteBtn = $('#mute');
 const backBtn = $('#back');
@@ -3640,7 +4523,7 @@ clearBtn.addEventListener('click', () => {
     setTimeout(() => { clearBtn.textContent = 'Clear record'; }, 1400);
     return;
   }
-  if (!confirm('Clear the win/loss record for all ten games? This cannot be undone.')) return;
+  if (!confirm('Clear the win/loss record for all eleven games? This cannot be undone.')) return;
   store.scores = {}; save(); repaintRecords();
 });
 
@@ -3669,7 +4552,7 @@ function hub() {
   document.body.dataset.view = 'hub';
   const wrap = mk('section', 'hub');
   const h1 = mk('h1');
-  h1.innerHTML = 'Ten games, no internet,<br><em>pass the keyboard.</em>';
+  h1.innerHTML = 'Eleven games, no internet,<br><em>pass the keyboard.</em>';
   const sub = mk('p', 'sub');
   sub.innerHTML = 'Everything here runs offline, in one folder. Pull up a second player on the same keyboard, or take on Talia — she has three moods: Easy, Steady and Ruthless.';
   wrap.appendChild(h1); wrap.appendChild(sub);
@@ -3769,6 +4652,10 @@ function openGame(g) {
       const b = $('.banner:not(.flash)', boardwrap); if (b) b.remove();
     },
     record(res) { if (res) { record(g.id, res); paintRecord(); } },
+    unrecord(res) {
+      const s = store.scores[g.id];
+      if (s && res && s[res] > 0) { s[res] -= 1; save(); paintRecord(); }
+    },
     end(res, label) {
       if (res) { record(g.id, res); paintRecord(); }
       const old = $('.banner:not(.flash)', boardwrap); if (old) old.remove();

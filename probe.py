@@ -200,8 +200,8 @@ class Probe:
             return
         GLib.timeout_add(250, lambda: (self.js('window.__probe', self.poll), False)[1])
 
-    def partial(self, raw):
-        self.finish(raw or 'timeout, no partial report')
+    def partial(self, raw, err=None):
+        self.finish(raw or ('EVAL ERROR ' + err if err else 'timeout, no partial report'))
 
     def finish(self, raw):
         self.result = raw

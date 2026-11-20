@@ -1,15 +1,16 @@
 #!/usr/bin/python3
-"""Stickman Party check: real WebKit window, real key events, real screenshots.
+"""Ball Party check: real WebKit window, real key events, real screenshots.
 
     ARCADE_PORT=8799 DISPLAY=:0 /usr/bin/python3 stest.py
 
 Two passes through the app's own WebView:
 
-  1. assertions — open card ten from the hub, then drive each of the five duels
+  1. assertions — open the last card from the hub, then drive each of the eight duels
      with dispatched keydown/keyup events and force each win path (ring-out,
      anvil flatten, barrier stun and the finish line, both tug directions,
-     quick-draw early and late). Finishes with a scripted three-round match so
-     the match-end banner is exercised.
+     quick-draw early and late, tiles claimed, snake growth and a wall crash,
+     a paddle return and three points). Finishes with a scripted three-round
+     match so the match-end banner is exercised.
   2. screenshots — re-open the game and stage one frame per duel, plus the intro
      countdown and the finished match, using WebKit's own snapshot (an X grab
      under Cinnamon's compositor lags behind the real frame).
@@ -62,6 +63,10 @@ void (async () => {
   const scores = () => (H() ? H().scores : null);
   const paused = () => (H() ? H().paused : null);
   const resume = () => { const s = document.querySelector('.sp-stage'); if (s) s.click(); };
+  // held keys survive across rounds by design (a key still down stays down), so
+  // every section that starts fresh has to let go of what the last one pressed
+  const releaseAll = () => ['KeyW', 'KeyA', 'KeyS', 'KeyD',
+    'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'].forEach(up);
 
   // advance the real frame function by hand, 16 ms at a time
   const drive = ms => {
@@ -148,9 +153,53 @@ void (async () => {
   drive(40);
   check('a barrier stuns', H().inst().st[0].stun > 0, H().inst().st[0].stun);
   drive(900);
-  H().inst().st[0].dist = 2600;
+  H().inst().st[0].dist = H().inst().GOAL;
   until(() => phase() === 'result', 1000);
   check('first to the line wins', phase() === 'result' && scores()[0] === 1, scores());
+
+  // ---- 4b. the run: the barrier pattern has to be clearable at racing speed.
+  //          A pilot that only steers at the nearest gap must come through three
+  //          races with no barrier hit at all — this is the dodgeability proof.
+  const pilot = () => {
+    const t0 = H().inst().st[0];
+    const laneXs = [0.18, 0.5, 0.82].map(f => t0.x + t0.w * f);
+    const steer = dir => {
+      up('KeyA'); up('KeyD');
+      if (dir < 0) down('KeyA'); else if (dir > 0) down('KeyD');
+    };
+    let stuns = 0, frames = 0;
+    resume();
+    for (frames = 0; frames < 1300 && phase() === 'play'; frames++) {
+      const t = H().inst().st[0], p = H().pl[0];
+      if (t.stun > 0) stuns++;
+      let row = null;
+      t.obs.forEach(o => { if (o.y < p.y + 14 && (row === null || o.y > row)) row = o.y; });
+      let want = null;
+      if (row !== null) {
+        const blockers = t.obs.filter(o => Math.abs(o.y - row) < 28);
+        let near = 1e9;
+        laneXs.forEach(lx => {
+          if (blockers.some(o => Math.abs(o.cx - lx) < 60)) return;
+          const dd = Math.abs(lx - p.x);
+          if (dd < near) { near = dd; want = lx; }
+        });
+      }
+      if (want === null) steer(0);
+      else steer(Math.abs(want - p.x) < 3 ? 0 : (want > p.x ? 1 : -1));
+      H().step(16, false);          // logic only: the pilot needs ~2000 frames
+    }
+    steer(0);
+    return { stuns: stuns, frames: frames, phase: phase(), scores: scores().join(), note: H().note };
+  };
+  const runs = [];
+  for (let a = 0; a < 3; a++) {
+    H().start(['race']);
+    H().skip();
+    until(() => phase() === 'play', 2000);
+    runs.push(pilot());
+  }
+  check('every barrier in the run is dodgeable (pilot, 3 races)',
+    runs.every(r => r.stuns === 0 && r.phase === 'result' && r.scores === '1,0'), runs);
 
   // ---- 5. tug of war: mashing drags the knot toward the masher
   H().start(['tug']);
@@ -183,7 +232,71 @@ void (async () => {
   check('the first key after the flare wins', scores().join() === '0,1' &&
     /quicker/.test(H().note), { scores: scores(), note: H().note });
 
-  // ---- 7. a whole match: three rounds, the last one ends it with a banner
+  // ---- 7. paint war: running over tiles claims them, most tiles wins
+  releaseAll();
+  H().start(['paint']);
+  H().skip();
+  until(() => phase() === 'play', 2000);
+  check('paint war is playing', phase() === 'play', phase());
+  const paint = H().inst().st;
+  const tiles0 = paint.score[0];
+  down('KeyD'); drive(520); up('KeyD');
+  check('running claims tiles', paint.score[0] > tiles0 + 1, [tiles0, paint.score[0]]);
+  down('ArrowLeft'); drive(520); up('ArrowLeft');
+  check('the rival claims tiles too', paint.score[1] > 0, paint.score.slice());
+  paint.score[0] = 11; paint.score[1] = 4; paint.t = paint.limit;
+  until(() => phase() === 'result', 1000);
+  check('most tiles takes the round', phase() === 'result' && scores().join() === '1,0',
+    { scores: scores(), note: H().note });
+
+  // ---- 8. trail: heads move on the grid, pellets grow, a wall ends it
+  releaseAll();
+  H().start(['trail']);
+  H().skip();
+  until(() => phase() === 'play', 2000);
+  check('trail is playing', phase() === 'play', phase());
+  const tr = H().inst().st;
+  const headX = tr.seg[0][0].x, rivalX = tr.seg[1][0].x;
+  drive(320);
+  check('both heads move on their own', tr.seg[0][0].x > headX && tr.seg[1][0].x < rivalX,
+    [headX, tr.seg[0][0].x, rivalX, tr.seg[1][0].x]);
+  const len0 = tr.seg[0].length;
+  const hd = tr.seg[0][0];
+  tr.pellets = [{ x: hd.x + 1, y: hd.y, t: 0 }];
+  drive(220);
+  check('a pellet makes the snake grow', tr.seg[0].length === len0 + 1,
+    [len0, tr.seg[0].length]);
+  tr.seg[1][0] = { x: 0, y: 5 };
+  tr.dir[1] = { x: -1, y: 0 };
+  until(() => phase() === 'result', 900);
+  check('a wall crash loses the round', phase() === 'result' && scores().join() === '1,0' &&
+    /Head first/.test(H().note), { scores: scores(), note: H().note });
+
+  // ---- 9. rally: the pad tracks a key, returns the ball, three points wins
+  releaseAll();
+  H().start(['rally']);
+  H().skip();
+  until(() => phase() === 'play', 2000);
+  check('rally is playing', phase() === 'play', phase());
+  const ry = H().inst().st;
+  const padY = ry.pad[0];
+  down('KeyW'); drive(240); up('KeyW');
+  check('P1 pad rises on W', ry.pad[0] < padY - 8, [d(padY), d(ry.pad[0])]);
+  ry.wait = 0;
+  ry.ball.x = ry.B.x + 16 + 9 + 12; ry.ball.y = ry.pad[0];
+  ry.ball.vx = -320; ry.ball.vy = 0;
+  drive(120);
+  check('the paddle returns the ball', ry.ball.vx > 0, d(ry.ball.vx));
+  ry.wait = 0; ry.ball.x = ry.B.x + ry.B.w + 40; ry.ball.y = 160;
+  ry.ball.vx = 320; ry.ball.vy = 0;
+  drive(100);
+  check('a ball past the line scores', ry.score[0] === 1, ry.score.slice());
+  ry.score = [2, 1]; ry.wait = 0; ry.ball.x = ry.B.x + ry.B.w + 40; ry.ball.vx = 320;
+  until(() => phase() === 'result', 900);
+  check('three points takes the round', phase() === 'result' && scores().join() === '1,0',
+    { scores: scores(), note: H().note });
+
+  // ---- 10. a whole match: three rounds, the last one ends it with a banner
   H().start(['ring', 'ring', 'ring']);
   for (let i = 0; i < 3; i++) {
     until(() => phase() === 'intro', 1000);
@@ -242,6 +355,34 @@ SHOT_STEPS = [
      "(() => { window.__nxParty.start(['draw']); window.__nxParty.skip();"
      "  window.__nxParty.inst().st.at = 0.2; })()",
      40, 'quick-draw'),
+    ('paint war',
+     "(() => { const h = window.__nxParty;"
+     "  const s = document.querySelector('.sp-stage'); if (s) s.click();"
+     "  h.start(['paint']); h.skip(); h.step(16);"
+     "  document.dispatchEvent(new KeyboardEvent('keydown', {code:'KeyD'}));"
+     "  document.dispatchEvent(new KeyboardEvent('keydown', {code:'ArrowLeft'}));"
+     "  for (let i = 0; i < 85; i++) h.step(16);"
+     "  document.dispatchEvent(new KeyboardEvent('keyup', {code:'KeyD'}));"
+     "  document.dispatchEvent(new KeyboardEvent('keyup', {code:'ArrowLeft'})); })()",
+     0, 'paint-war'),
+    ('trail',
+     "(() => { const h = window.__nxParty;"
+     "  const s = document.querySelector('.sp-stage'); if (s) s.click();"
+     "  h.start(['trail']); h.skip(); h.step(16);"
+     "  for (let i = 0; i < 18; i++) h.step(16);"
+     "  document.dispatchEvent(new KeyboardEvent('keydown', {code:'ArrowUp'}));"
+     "  for (let i = 0; i < 28; i++) h.step(16);"
+     "  document.dispatchEvent(new KeyboardEvent('keyup', {code:'ArrowUp'}));"
+     "  for (let i = 0; i < 24; i++) h.step(16); })()",
+     0, 'trail'),
+    ('rally',
+     "(() => { const h = window.__nxParty;"
+     "  const s = document.querySelector('.sp-stage'); if (s) s.click();"
+     "  h.start(['rally']); h.skip(); h.step(16);"
+     "  const st = h.inst().st; st.wait = 0;"
+     "  st.ball.x = 470; st.ball.y = 176; st.ball.vx = 260; st.ball.vy = 96;"
+     "  for (let i = 0; i < 26; i++) h.step(16); })()",
+     0, 'rally'),
     ('match end, round one',
      "(() => { window.__nxParty.start(['ring','ring']); window.__nxParty.skip();"
      "  window.__nxParty.pl[1].x = 760; })()",
@@ -256,7 +397,7 @@ class Party:
         self.server, error = arcade.start_server()
         if self.server is None:
             raise SystemExit(f'server failed: {error}')
-        self.win = Gtk.Window(title='stickman party check')
+        self.win = Gtk.Window(title='ball party check')
         self.win.set_default_size(1140, 860)
         self.view = WebKit2.WebView.new_with_context(arcade.web_context())
         self.view.load_uri(arcade.URL)
@@ -369,7 +510,7 @@ class Party:
 
 def main():
     party = Party()
-    GLib.timeout_add_seconds(180, lambda: (print('TIMEOUT'), Gtk.main_quit(), False)[2])
+    GLib.timeout_add_seconds(420, lambda: (print('TIMEOUT'), Gtk.main_quit(), False)[2])
     Gtk.main()
     party.server.shutdown()
 

@@ -299,7 +299,7 @@ def main():
 
     mate = dict(walk.said).get('fool 4', {})
     mate_ok = 'checkmate' in str(mate.get('banner', '')).lower()
-    verdict = ok and mate_ok and not errors and not walk.eval_errors and hub.get('cards') == 10
+    verdict = ok and mate_ok and not errors and not walk.eval_errors and hub.get('cards') == 11
     print('\nVERDICT:', 'pass' if verdict else 'FAIL')
     return 0 if verdict else 1
 

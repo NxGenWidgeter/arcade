@@ -1,4 +1,4 @@
-# Arcade — ten games, offline
+# Arcade — eleven games, offline
 
 **Play now: <https://nxgenwidgeter.github.io/arcade/>**
 
@@ -34,24 +34,40 @@ desktop app serves the same three files from a fixed `127.0.0.1` port.
 | 7 | Mancala         | depth 4 / 6 / 8              | alpha-beta with extra-turn handling                |
 | 8 | Blackjack       | six decks, dealer stands 17  | — (house game, no opponent AI)                     |
 | 9 | Big Two         | three AI seats               | climbs legal plays, holds back on Easy             |
-| 10| Stickman Party  | a second human, best of five | — (real-time, no AI)                               |
+| 10 | Poker          | Talia, fixed-limit hold'em   | hand strength vs pot odds, looser and pushier by mood |
+| 11 | Ball Party     | a second human, best of five | — (real-time, no AI)                               |
 
 Every search has an iterative-deepening time budget (200 ms / 520 ms / 950 ms), so
 `Ruthless` thinks longer instead of freezing the page.
 
-## Stickman Party
+## Ball Party
 
-The one game that is not turn-based. Five short duels, shuffled each match: **Ring
-out** (shove your rival off a shrinking disc), **Anvils** (dodge the shadows, last one
-standing), **The run** (left/right through falling barriers, first to the line),
-**Tug of war** (mash your keys, drag the knot past your marker) and **Quick draw**
-(first key after the flare; press early and you lose). Most round wins takes the
-match, and a tie gets one more round.
+The one game that is not turn-based. Eight short duels, five of them drawn at random
+for each match: **Ring out** (shove your rival off a shrinking disc), **Anvils** (dodge
+the shadows, last one standing), **The run** (left/right through falling barriers,
+first to the line), **Tug of war** (mash your keys, drag the knot past your marker),
+**Quick draw** (first key after the flare; press early and you lose), **Paint war**
+(claim floor tiles for eighteen seconds, most tiles wins), **Trail** (grid snakes:
+eat pellets, grow, make the other one crash) and **Rally** (paddle tennis to three
+points). Most round wins takes the match, and a tie gets one more round.
 
 Player 1 uses `W A S D`. Player 2 uses the arrow keys. The arena is a canvas with a
 fixed 60 fps loop, so both sets of keys are live at once. Losing window focus pauses
 the round; click the arena to resume. There is no AI opponent and nothing is recorded
 in the win/loss strip, because there is no winner to credit.
+
+## Poker
+
+Heads-up Texas hold'em against Talia, fixed limit. Both players start with 500 chips
+and the stacks carry over between hands (refilled when someone goes broke). Blinds are
+10/20, bets and raises are 20 before the turn and 40 after, four raises a street. She
+posts the small blind on alternate hands — the button alternates, and preflop the small
+blind acts first.
+
+Fold, call/check and bet/raise are the only decisions; the rest is the board. At
+showdown the best five of seven decides, and the evaluator covers every category down
+to the wheel (`A-2-3-4-5`) with proper kickers. **Undo** rewinds your last action *and*
+whatever Talia did in reply. **Hint** names your hand and what it costs to stay in.
 
 ## Controls
 
@@ -65,8 +81,8 @@ in the win/loss strip, because there is no winner to credit.
 
 ## Features
 
-Ten games, one page, no install: Tic-Tac-Toe, Connect Four, Reversi, Checkers, Chess,
-Five in a Row, Mancala, Blackjack, Big Two and Stickman Party. They are all entries in
+Eleven games, one page, no install: Tic-Tac-Toe, Connect Four, Reversi, Checkers, Chess,
+Five in a Row, Mancala, Blackjack, Big Two, Poker and Ball Party. They are all entries in
 one `GAMES` array, so the hub cards, the tagline and the rules panel are generated from
 the game object itself.
 
@@ -74,18 +90,22 @@ the game object itself.
   budget of 200 ms, 520 ms, 950 ms.
 - **Hotseat** — `vs Talia` or `2 players` on one keyboard. Hotseat games aren't scored:
   there's no winner to credit.
-- **Undo** in the eight turn-based board and card games; it rewinds your move and the
-  reply. Blackjack has none, because a dealt card is a dealt card.
-- **Hint** in nine games. In Blackjack it's a basic-strategy advisor ("Basic play says:
-  hit"), not a peek at the shoe.
+- **Undo** everywhere a take-back makes sense: the eight turn-based board games, Poker,
+  and Blackjack. It rewinds your move and the reply. In Blackjack a settled hand comes
+  back to the decision point — the cards, the stake and the chips are restored, and the
+  win/loss entry it added is removed from the record.
+- **Hint** in ten games. In Blackjack it's a basic-strategy advisor ("Basic play says:
+  hit"), not a peek at the shoe; in Poker it names your made hand and the price of
+  calling.
 - **Record** — wins, losses and draws per game, kept in `localStorage` and shown on the
   hub card (`1W · 2L · 0D`) and in the game panel. A fresh profile reads
   `no games played`. `Download record` in the footer saves it as JSON; `Clear record`
   wipes it after a confirm.
 - **Blackjack bankroll** — chips and your bet size carry over between visits, and Deal
   stays disabled while the bank can't cover the bet.
-- **Stickman Party** — five real-time duels, best of five, one extra round on a tie.
-  Losing window focus pauses the round; click the arena to resume.
+- **Ball Party** — eight real-time duels, five drawn per match, best of five, one
+  extra round on a tie. Losing window focus pauses the round; click the arena to
+  resume.
 - **Sound** is synthesised at runtime, so there are no audio files to lose. **Esc**
   returns to the hub from any game.
 - **Keyboard and touch** — board squares are real buttons with `aria-label`s, and the
@@ -108,9 +128,10 @@ Everything you can change without editing a file:
 | Blackjack bet | the chip buttons while betting | 10 / 25 / 50 / 100 |
 
 Those settings, the per-game record and the Blackjack bankroll share one `localStorage`
-key, `nxgen.arcade.v1`. Three games hide the opponent segment (Big Two is always three
-AI seats, Blackjack and Stickman Party have no AI to choose); two hide the mood segment
-(Blackjack, Stickman Party). That's the `hideMode` / `hideDiff` flag on the game object,
+key, `nxgen.arcade.v1`. Four games hide the opponent segment (Big Two is always three
+AI seats; Blackjack, Poker and Ball Party have no opponent to choose); three hide
+the mood segment (Blackjack and Ball Party — Poker keeps it, because it sets how
+loose Talia plays). That's the `hideMode` / `hideDiff` flag on the game object,
 not something you can toggle.
 
 For the desktop window: `ARCADE_PORT` (default 8788) and `ARCADE_DEBUG=1` for console
@@ -141,13 +162,14 @@ Append an object to the `GAMES` array in `arcade.js`:
         // ctx.end(res, label)        res: 'w'|'l'|'d' or null for hotseat
         // ctx.flash(text)            transient message
         // ctx.alive()                false once the view is torn down
+        // ctx.record(res) / ctx.unrecord(res)  add or take back a record entry
         return { undo, hint };       // both optional
       }
     }
 
 `ctx.alive()` matters: AI turns run after `await` delays, so check it before
 touching the DOM or a queued move will paint into a game you already left.
-`hideMode` / `hideDiff` drop the opponent and mood segments; Stickman Party sets
+`hideMode` / `hideDiff` drop the opponent and mood segments; Ball Party sets
 both, and draws into a canvas instead of DOM squares.
 
 ## Known limits
@@ -160,9 +182,10 @@ both, and draws into a canvas instead of DOM squares.
   stalemate, the fifty-move rule and dead positions — and threefold repetition.
   Its move generator is verified against perft:
   `ARCADE_PORT=8799 /usr/bin/python3 ctest.py`.
-- Stickman Party is keyboard-only (no gamepads) and its duels are deliberately
-  short; `stest.py` drives all five through the real WebView. Touch devices get a
+- Ball Party is keyboard-only (no gamepads) and its duels are deliberately
+  short; `stest.py` drives all eight through the real WebView. Touch devices get a
   "needs a keyboard" badge on its hub card.
-- `window.__nxChess` and `window.__nxParty` are test hooks (perft + FEN loader, and
-  minigame state) used by `ctest.py` / `stest.py`; nothing in the UI depends on them.
+- `window.__nxChess`, `window.__nxParty` and `window.__nxPoker` are test hooks (perft +
+  FEN loader, minigame state, and the hand evaluator plus a scripted hand) used by
+  `ctest.py`, `stest.py` and `ptest.py`; nothing in the UI depends on them.
 - The record is per browser profile. Clearing site data resets it.
