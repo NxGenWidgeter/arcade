@@ -489,7 +489,7 @@ footer .linkbtn:focus-visible{outline:1px solid var(--accent);outline-offset:3px
   <span class="brand">NxGen<b>·</b>Arcade</span>
   <span class="spacer"></span>
   <button id="mute" class="iconbtn" type="button" aria-label="Toggle sound" title="Sound on/off">♪</button>
-  <button id="theme" class="iconbtn" type="button" aria-label="Light / dark" title="Light / dark">◐</button>
+  <button id="theme" class="iconbtn" type="button" aria-label="Theme: Glasswarm or Parchment" title="Theme: Glasswarm — click for Parchment">◐</button>
 </div>
 <main id="screen" style="width:100%"></main>
 <footer>
@@ -502,10 +502,14 @@ footer .linkbtn:focus-visible{outline:1px solid var(--accent);outline-offset:3px
 <script>
   /* The only theme logic here: flip the flag, remember it. Every colour it
      switches lives in glasswarm.css. */
-  document.getElementById('theme').onclick = () => {
+  const themeBtn = document.getElementById('theme');
+  const label = (mode) => (mode === 'light' ? 'Parchment' : 'Glasswarm');
+  themeBtn.onclick = () => {
     const root = document.documentElement;
     const next = root.dataset.theme === 'light' ? 'dark' : 'light';
     root.dataset.theme = next;
+    themeBtn.title = `Theme: ${label(next)} — click for ${label(next === 'light' ? 'dark' : 'light')}`;
+    themeBtn.setAttribute('aria-label', `Theme: ${label(next)}`);
     try { localStorage.setItem('arcade.theme', next); } catch (e) {}
   };
 </script>
