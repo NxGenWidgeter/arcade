@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -7,10 +7,10 @@
 <meta name="description" content="Eleven games — chess, checkers, Reversi, Connect Four, Mancala, Blackjack, Poker, Ball Party and more — offline, nothing to install, against a local AI or a second player at the same keyboard.">
 <title>Arcade — eleven games, no internet</title>
 <style>
+/* Colour comes from the shared Glasswarm theme (glasswarm.css) — installed once
+   for the whole portfolio and copied into this folder at publish time, so the
+   gh-pages build stays a plain static bundle. Type and geometry stay here. */
 :root{
-  --bg:#0c0a08; --panel:#141110; --panel2:#1a1614; --line:#2a2320; --line2:#3a3029;
-  --ink:#efe8dc; --muted:#9c9186; --dim:#6f665d;
-  --accent:#e7c97f; --accent-text:#c9a75c; --good:#8fb89a; --bad:#cf7a6a;
   --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
   --sans:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -477,6 +477,11 @@ footer .linkbtn{
 footer .linkbtn:hover{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}
 footer .linkbtn:focus-visible{outline:1px solid var(--accent);outline-offset:3px}
 </style>
+<link rel="stylesheet" href="glasswarm.css">
+<script>
+  /* Pre-paint: the palette is shared, the choice belongs to this browser. */
+  try { document.documentElement.dataset.theme = localStorage.getItem('arcade.theme') || 'dark'; } catch (e) {}
+</script>
 </head>
 <body data-view="hub">
 <div class="topbar">
@@ -484,6 +489,7 @@ footer .linkbtn:focus-visible{outline:1px solid var(--accent);outline-offset:3px
   <span class="brand">NxGen<b>·</b>Arcade</span>
   <span class="spacer"></span>
   <button id="mute" class="iconbtn" type="button" aria-label="Toggle sound" title="Sound on/off">♪</button>
+  <button id="theme" class="iconbtn" type="button" aria-label="Light / dark" title="Light / dark">◐</button>
 </div>
 <main id="screen" style="width:100%"></main>
 <footer>
@@ -493,6 +499,16 @@ footer .linkbtn:focus-visible{outline:1px solid var(--accent);outline-offset:3px
     <button id="record-clear" class="linkbtn" type="button">Clear record</button>
   </span>
 </footer>
+<script>
+  /* The only theme logic here: flip the flag, remember it. Every colour it
+     switches lives in glasswarm.css. */
+  document.getElementById('theme').onclick = () => {
+    const root = document.documentElement;
+    const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+    root.dataset.theme = next;
+    try { localStorage.setItem('arcade.theme', next); } catch (e) {}
+  };
+</script>
 <script src="arcade.js"></script>
 </body>
 </html>

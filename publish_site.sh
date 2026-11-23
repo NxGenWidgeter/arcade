@@ -13,7 +13,7 @@ cd "$ROOT"
 
 REMOTE="${REMOTE:-origin}"
 BRANCH="${BRANCH:-gh-pages}"
-SITE=(index.html arcade.js icon.svg)
+SITE=(index.html arcade.js icon.svg glasswarm.css)
 
 # A publish with stale bytes is worse than no publish: prove the payload.
 for f in "${SITE[@]}"; do
@@ -21,6 +21,13 @@ for f in "${SITE[@]}"; do
 done
 grep -q 'arcade.js' index.html \
   || { echo "refusing to publish: index.html does not load arcade.js" >&2; exit 1; }
+grep -q 'glasswarm.css' index.html \
+  || { echo "refusing to publish: index.html does not load glasswarm.css" >&2; exit 1; }
+# the bundled copy must be the installed theme, not last month's
+if [ -f "$HOME/.local/share/nxg-themes/glasswarm/glasswarm.css" ]; then
+  cmp -s glasswarm.css "$HOME/.local/share/nxg-themes/glasswarm/glasswarm.css" \
+    || { echo "refusing to publish: glasswarm.css != installed theme (run glasswarm/sync-static.sh)" >&2; exit 1; }
+fi
 node --check arcade.js \
   || { echo "refusing to publish: arcade.js does not parse" >&2; exit 1; }
 

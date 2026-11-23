@@ -1,0 +1,242 @@
+/* ============================================================================
+   Glasswarm — the desktop, as a palette.
+
+   Matched to the actual screen, not to a colour-scheme file: WhiteSur-dark
+   Plasma, i.e. warm neutral GREY window surfaces (#363636 chrome, #242424 body,
+   #424242 raised) with the cream-gold liquid-glass wallpaper (#e3ceab -> #dac199)
+   bleeding through as the one warm accent. Near-black was the wrong read — the
+   desktop is metal, not a void, and the gold comes from the wallpaper.
+
+   This file is the ONLY place colours are declared. Install it once
+   (./install.sh); every app that links /theme/glasswarm.css renders in this
+   palette. There is no per-app copy to drift.
+
+   Keys on data-theme, which the apps already set:
+     dark  (alias "gold")       Glasswarm — the desktop's night side
+     light (alias "parchment")  Parchment — the wallpaper's cream side
+   The aliases keep already-saved per-app preferences working.
+   ========================================================================== */
+
+/* ---------- Glasswarm ---------------------------------------------------- */
+:root,
+html[data-theme="dark"],
+html[data-theme="gold"] {
+  color-scheme: dark;
+
+  /* surfaces — the desktop's grey stack, warm-neutral rather than blue-black */
+  --bg: #1e1e1e;
+  --bg-2: #232323;
+  --panel: #2a2a2a;
+  --panel-2: #303030;
+  --panel2: #303030;
+  --raise: #383838;
+  --card: #2a2a2a;
+  --card-2: #303030;
+  --surface: #2a2a2a;
+  --surface-2: #303030;
+  --shot: #232323;
+  --code-bg: #232323;
+  --head-a: #313131;
+  --head-b: #262626;
+  --head-bg: #262626;
+  --tint: #343434;
+  --tint-2: #3d3d3d;
+  --toast: #303030;
+  --tip: #2c2c2c;
+
+  /* lines */
+  --line: rgba(255, 255, 255, 0.085);
+  --line-2: rgba(255, 255, 255, 0.16);
+  --line2: rgba(255, 255, 255, 0.16);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --line-soft: rgba(255, 255, 255, 0.05);
+  --toast-line: rgba(255, 255, 255, 0.13);
+  --badge-line: rgba(224, 176, 98, 0.35);
+  --track: rgba(255, 255, 255, 0.10);
+
+  /* type — WhiteSur's off-white, warmed a touch by the wallpaper */
+  --text: #f4f2ee;
+  --text-2: #d9d6d1;
+  --ink: #f4f2ee;
+  --verse: #f8f6f1;
+  --muted: #a6a29b;
+  --dim: #a6a29b;
+  --faint: #7d7a74;
+  --dimmer: #7d7a74;
+  --hint: #6b6862;
+  --locked: #6b6862;
+
+  /* one gold, straight off the wallpaper */
+  --accent: #e0b062;
+  --accent-2: #f2d093;
+  --accent-text: #e0b062;
+  --accent-hover: #f2d093;
+  --accent-ink: #241b08;
+  --accent-dim: #6d5427;
+  --accent-soft: rgba(224, 176, 98, 0.14);
+  --accent-line: rgba(224, 176, 98, 0.38);
+  --accent-wash: rgba(224, 176, 98, 0.08);
+  --on-accent: #241b08;
+  --gold: #e0b062;
+  --gold-2: #f2d093;
+  --gold-dim: rgba(224, 176, 98, 0.6);
+  --now-ink: #f2d093;
+  --primary-bg: rgba(224, 176, 98, 0.16);
+  --primary-ink: #e0b062;
+  --primary-line: rgba(224, 176, 98, 0.40);
+  --badge-bg: rgba(224, 176, 98, 0.16);
+  --glow: rgba(224, 176, 98, 0.28);
+  --focus-ring: rgba(224, 176, 98, 0.50);
+
+  /* states */
+  --ok: #6fce9b;
+  --good: #6fce9b;
+  --green: #6fce9b;
+  --ok-soft: rgba(111, 206, 155, 0.15);
+  --info: #93b8f7;
+  --info-soft: rgba(147, 184, 247, 0.15);
+  --warn: #e8b04b;
+  --amber: #e8b04b;
+  --warn-soft: rgba(232, 176, 75, 0.15);
+  --danger: #ec8578;
+  --bad: #ec8578;
+  --red: #ec8578;
+  --crit: #ef7466;
+  --danger-soft: rgba(236, 133, 120, 0.14);
+  --red-bg: rgba(236, 133, 120, 0.11);
+  --red-bg-strong: rgba(236, 133, 120, 0.17);
+  --red-text: #f5b0a5;
+
+  /* depth */
+  --shadow: 0 18px 44px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 8px 22px rgba(0, 0, 0, 0.28);
+  --float-shadow: rgba(0, 0, 0, 0.5);
+  --scrim: rgba(0, 0, 0, 0.5);
+  --hover: rgba(255, 255, 255, 0.045);
+  --sel: rgba(224, 176, 98, 0.12);
+  --sel-bg: rgba(224, 176, 98, 0.09);
+}
+
+/* ---------- Parchment ---------------------------------------------------- */
+html[data-theme="light"],
+html[data-theme="parchment"] {
+  color-scheme: light;
+
+  --bg: #f3f2ef;
+  --bg-2: #eeece8;
+  --panel: #fdfdfc;
+  --panel-2: #f6f4f0;
+  --panel2: #f6f4f0;
+  --raise: #ecebe7;
+  --card: #fdfdfc;
+  --card-2: #f6f4f0;
+  --surface: #fdfdfc;
+  --surface-2: #f6f4f0;
+  --shot: #f0eeea;
+  --code-bg: #f0eeea;
+  --head-a: #fdfdfc;
+  --head-b: #f3f2ef;
+  --head-bg: #f6f4f0;
+  --tint: #efe8d9;
+  --tint-2: #f9f4e8;
+  --toast: #fdfdfc;
+  --tip: #fdfdfc;
+
+  --line: rgba(30, 28, 24, 0.10);
+  --line-2: rgba(30, 28, 24, 0.19);
+  --line2: rgba(30, 28, 24, 0.19);
+  --line-strong: rgba(30, 28, 24, 0.19);
+  --line-soft: rgba(30, 28, 24, 0.07);
+  --toast-line: rgba(30, 28, 24, 0.14);
+  --badge-line: rgba(165, 115, 31, 0.30);
+  --track: rgba(30, 28, 24, 0.10);
+
+  --text: #2a2723;
+  --text-2: #45403a;
+  --ink: #2a2723;
+  --verse: #201d19;
+  --muted: #6f6a63;
+  --dim: #6f6a63;
+  --faint: #96908a;
+  --dimmer: #96908a;
+  --hint: #a8a39c;
+  --locked: #a8a39c;
+
+  --accent: #a5731f;
+  --accent-2: #7d5514;
+  --accent-text: #a5731f;
+  --accent-hover: #8a6119;
+  --accent-ink: #fffdf8;
+  --accent-dim: #d8c39a;
+  --accent-soft: rgba(165, 115, 31, 0.11);
+  --accent-line: rgba(165, 115, 31, 0.32);
+  --accent-wash: rgba(165, 115, 31, 0.07);
+  --on-accent: #fffdf8;
+  --gold: #a5731f;
+  --gold-2: #7d5514;
+  --gold-dim: rgba(165, 115, 31, 0.5);
+  --now-ink: #7d5514;
+  --primary-bg: rgba(165, 115, 31, 0.11);
+  --primary-ink: #8a6119;
+  --primary-line: rgba(165, 115, 31, 0.32);
+  --badge-bg: rgba(165, 115, 31, 0.11);
+  --glow: rgba(165, 115, 31, 0.20);
+  --focus-ring: rgba(165, 115, 31, 0.42);
+
+  --ok: #2f8f5f;
+  --good: #2f8f5f;
+  --green: #2f8f5f;
+  --ok-soft: rgba(47, 143, 95, 0.11);
+  --info: #2f6fe0;
+  --info-soft: rgba(47, 111, 224, 0.11);
+  --warn: #a57012;
+  --amber: #a57012;
+  --warn-soft: rgba(165, 112, 18, 0.11);
+  --danger: #b8493b;
+  --bad: #b8493b;
+  --red: #b8493b;
+  --crit: #a8342a;
+  --danger-soft: rgba(184, 73, 59, 0.10);
+  --red-bg: rgba(184, 73, 59, 0.09);
+  --red-bg-strong: rgba(184, 73, 59, 0.15);
+  --red-text: #a03a2e;
+
+  --shadow: 0 18px 44px rgba(60, 52, 40, 0.16);
+  --shadow-soft: 0 8px 20px rgba(60, 52, 40, 0.10);
+  --float-shadow: rgba(60, 52, 40, 0.18);
+  --scrim: rgba(48, 40, 28, 0.16);
+  --hover: rgba(30, 28, 24, 0.04);
+  --sel: rgba(165, 115, 31, 0.11);
+  --sel-bg: rgba(165, 115, 31, 0.09);
+}
+
+/* ---------- the glass ----------------------------------------------------
+   The wallpaper is a cream-gold bloom on grey glass. Carrying that glow behind
+   the app — over the desktop's own surface colour, not over black — is what
+   makes this read as *this* desktop and not "a dark theme with a gold button". */
+html body {
+  background-color: var(--bg);
+}
+
+html[data-theme="dark"] body,
+html[data-theme="gold"] body {
+  background-image:
+    radial-gradient(1200px 720px at 10% -12%, rgba(224, 176, 98, 0.10), transparent 62%),
+    radial-gradient(920px 560px at 106% -2%, rgba(227, 206, 171, 0.055), transparent 58%),
+    linear-gradient(180deg, #262626 0%, #1e1e1e 46%, #1b1b1b 100%);
+  background-attachment: fixed;
+}
+
+html[data-theme="light"] body,
+html[data-theme="parchment"] body {
+  background-image:
+    radial-gradient(1100px 660px at 8% -10%, rgba(227, 206, 171, 0.55), transparent 64%),
+    radial-gradient(900px 560px at 108% 0%, rgba(255, 255, 255, 0.9), transparent 60%),
+    linear-gradient(180deg, #f7f5f1 0%, #f3f2ef 50%, #eeece8 100%);
+  background-attachment: fixed;
+}
+
+html ::selection {
+  background: var(--accent-soft);
+  color: var(--text);
+}
