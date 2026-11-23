@@ -428,6 +428,72 @@ body[data-view="game"] .brand{display:none}
 .btbar{display:flex;gap:8px;align-items:center}
 .bt .turnlbl{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);min-height:14px}
 
+/* ---------- chess FEN / PGN ---------- */
+.chess-tools{display:flex;flex-direction:column;gap:8px;padding-top:13px;border-top:1px solid var(--line)}
+.chess-tools .fen{
+  width:100%;padding:7px 8px;border:1px solid var(--line);border-radius:7px;
+  background:var(--bg-2);color:var(--muted);font-family:var(--mono);font-size:9.5px;
+  line-height:1.4;text-overflow:ellipsis;
+}
+.chess-tools .fen:focus{outline:1px solid var(--accent);outline-offset:1px}
+.chess-tools .row{gap:6px}
+.chess-tools .btn{padding:7px 4px;font-size:10.5px}
+.chess-tools .tools-note{font-family:var(--mono);font-size:9px;letter-spacing:.08em;color:var(--dim);min-height:12px}
+
+/* ---------- stats / shortcuts sheets ---------- */
+.sheet-veil{
+  position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:24px;
+  background:var(--scrim);animation:fadein .16s ease;
+}
+.sheet{
+  width:min(580px,100%);max-height:min(82vh,760px);overflow:auto;
+  padding:22px 24px 20px;border:1px solid var(--line2);border-radius:18px;
+  background:var(--panel);box-shadow:var(--shadow);
+}
+.sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:6px}
+.sheet h2{font-family:var(--serif);font-weight:400;font-size:24px;letter-spacing:-.01em;margin:0 0 4px}
+.sheet .sheet-sub{margin:0 0 18px;color:var(--muted);font-size:12px;line-height:1.55}
+.sheet .sheet-close{
+  flex:none;width:30px;height:30px;border-radius:50%;border:1px solid var(--line);
+  display:grid;place-items:center;color:var(--muted);font-size:15px;
+}
+.sheet .sheet-close:hover{color:var(--ink);border-color:var(--line2)}
+.sheet .totals{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px}
+.sheet .totals .cell{
+  padding:10px 6px;border:1px solid var(--line);border-radius:10px;
+  background:var(--bg-2);text-align:center;
+}
+.sheet .totals .cell b{display:block;font-family:var(--serif);font-weight:400;font-size:21px;line-height:1.1;color:var(--ink)}
+.sheet .totals .cell span{font-family:var(--mono);font-size:8.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.sheet .totals .cell.win b{color:var(--good)}
+.sheet .totals .cell.loss b{color:var(--bad)}
+.stat-table{width:100%;border-collapse:collapse;font-size:12px}
+.stat-table th{
+  padding:0 6px 7px;text-align:right;font-family:var(--mono);font-weight:400;
+  font-size:8.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);
+}
+.stat-table th:first-child{text-align:left}
+.stat-table td{padding:7px 6px;border-top:1px solid var(--line);text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+.stat-table td:first-child{text-align:left;color:var(--ink);font-family:var(--serif);font-size:13px}
+.stat-table tr:hover td{background:var(--hover)}
+.stat-table .rate{font-family:var(--mono);font-size:10px}
+.stat-table .zero{color:var(--faint)}
+.sheet .sheet-note{margin:14px 0 0;font-family:var(--mono);font-size:9px;line-height:1.7;letter-spacing:.06em;color:var(--dim)}
+.keylist{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:center;margin:0}
+.keylist kbd{
+  justify-self:start;min-width:24px;padding:4px 7px;border:1px solid var(--line2);border-radius:6px;
+  background:var(--bg-2);font-family:var(--mono);font-size:10px;color:var(--ink);text-align:center;
+}
+.keylist span{font-size:12px;color:var(--muted);line-height:1.45}
+.keylist .sect{grid-column:1 / -1;margin-top:10px;font-family:var(--mono);font-size:8.5px;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+@media (max-width:560px){
+  .sheet{padding:18px 16px 16px}
+  .sheet .totals{grid-template-columns:repeat(2,1fr)}
+  .stat-table th:nth-child(5),.stat-table td:nth-child(5){display:none}
+}
+
 /* ---------- narrow screens ---------- */
 @media (max-width:560px){
   .game{padding:8px 14px 44px}
@@ -489,6 +555,8 @@ footer .linkbtn:focus-visible{outline:1px solid var(--accent);outline-offset:3px
   <span class="brand">NxGen<b>·</b>Arcade</span>
   <span class="spacer"></span>
   <button id="mute" class="iconbtn" type="button" aria-label="Toggle sound" title="Sound on/off">♪</button>
+  <button id="stats" class="iconbtn" type="button" aria-label="Stats for every game" title="Stats (S)">▤</button>
+  <button id="help" class="iconbtn" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>
   <button id="theme" class="iconbtn" type="button" aria-label="Theme: Glasswarm or Parchment" title="Theme: Glasswarm — click for Parchment">◐</button>
 </div>
 <main id="screen" style="width:100%"></main>

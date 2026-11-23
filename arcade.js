@@ -1023,14 +1023,38 @@ const chess = (() => {
     if (rights.includes('k')) castle |= 4;
     if (rights.includes('q')) castle |= 8;
     const ep = parts[3] && parts[3] !== '-' ? alg(parts[3]) : -1;
-    return { b, turn: parts[1] === 'b' ? BLACK : WHITE, castle, ep, half: +(parts[4] || 0) };
+    return { b, turn: parts[1] === 'b' ? BLACK : WHITE, castle, ep, half: +(parts[4] || 0), full: +(parts[5] || 1) };
   }
   function alg(sq) {
     const c = sq.charCodeAt(0) - 97, r = 8 - +sq[1];
     return r >= 0 && r < 8 && c >= 0 && c < 8 ? r * 8 + c : -1;
   }
+  const sqName = i => String.fromCharCode(97 + (i & 7)) + (8 - (i >> 3));
+  /* Full six-field FEN of a live position — the export the panel offers. */
+  function toFen(st) {
+    const rows = [];
+    for (let r = 0; r < 8; r++) {
+      let row = '', empty = 0;
+      for (let c = 0; c < 8; c++) {
+        const v = st.b[r * 8 + c];
+        if (!v) { empty++; continue; }
+        if (empty) { row += empty; empty = 0; }
+        const letter = ['', 'p', 'n', 'b', 'r', 'q', 'k'][Math.abs(v)];
+        row += v > 0 ? letter.toUpperCase() : letter;
+      }
+      if (empty) row += empty;
+      rows.push(row);
+    }
+    let rights = '';
+    if (st.castle & 1) rights += 'K';
+    if (st.castle & 2) rights += 'Q';
+    if (st.castle & 4) rights += 'k';
+    if (st.castle & 8) rights += 'q';
+    return rows.join('/') + ' ' + (st.turn === WHITE ? 'w' : 'b') + ' ' + (rights || '-') +
+      ' ' + (st.ep >= 0 ? sqName(st.ep) : '-') + ' ' + st.half + ' ' + st.full;
+  }
   const initial = () => fromFen(START);
-  const clone = st => ({ b: Int8Array.from(st.b), turn: st.turn, castle: st.castle, ep: st.ep, half: st.half });
+  const clone = st => ({ b: Int8Array.from(st.b), turn: st.turn, castle: st.castle, ep: st.ep, half: st.half, full: st.full });
 
   function kingSq(b, side) {
     const k = KING * side;
@@ -1159,7 +1183,7 @@ const chess = (() => {
     const b = st.b, piece = b[m.from], side = sideOf(piece);
     const rec = {
       from: m.from, to: m.to, piece, cap: b[m.to], flag: m.flag,
-      castle: st.castle, ep: st.ep, half: st.half, capSq: -1, rook: null
+      castle: st.castle, ep: st.ep, half: st.half, full: st.full, capSq: -1, rook: null
     };
     if (m.flag === 2) {
       rec.capSq = m.to + 8 * side;
@@ -1184,6 +1208,7 @@ const chess = (() => {
     st.ep = m.flag === 1 ? (m.from + m.to) >> 1 : -1;
     st.half = (Math.abs(piece) === PAWN || rec.cap) ? 0 : st.half + 1;
     st.turn = -side;
+    if (st.turn === WHITE) st.full++;
     return rec;
   }
   function unmake(st, m, rec) {
@@ -1195,6 +1220,7 @@ const chess = (() => {
     st.castle = rec.castle;
     st.ep = rec.ep;
     st.half = rec.half;
+    st.full = rec.full;
     st.turn = -st.turn;
   }
 
@@ -1369,6 +1395,7 @@ const chess = (() => {
     mount(ctx) {
       const mode = ctx.mode, diff = ctx.diff, HUMAN = WHITE;
       let st = initial(), over = false, hist = [], sel = null, last = null, promo = null, tips = [];
+      let sans = [], result = '*';   // PGN move list and result, in step with hist
 
       const board = mk('div', 'board ch');
       ctx.boardEl.appendChild(board);
@@ -1385,6 +1412,75 @@ const chess = (() => {
         board.appendChild(s); sqs.push(s);
       }
       const humanTurn = () => mode === 'two' || st.turn === HUMAN;
+
+      /* ---- move notation + FEN/PGN export ---- */
+      const pieceLetter = code => ['', '', 'N', 'B', 'R', 'Q', 'K'][code];
+      function sanBase(m) {
+        if (m.flag === 3) return m.to > m.from ? 'O-O' : 'O-O-O';
+        const piece = st.b[m.from], code = Math.abs(piece);
+        const cap = !!st.b[m.to] || m.flag === 2;
+        const dest = sqName(m.to);
+        if (code === PAWN) return (cap ? 'abcdefgh'[m.from & 7] + 'x' : '') + dest +
+          (m.promo ? '=' + pieceLetter(m.promo) : '');
+        let dis = '';
+        const rivals = legal(st, st.turn).filter(x =>
+          x.from !== m.from && x.to === m.to && Math.abs(st.b[x.from]) === code);
+        if (rivals.length) {
+          const sameFile = rivals.some(x => (x.from & 7) === (m.from & 7));
+          const sameRank = rivals.some(x => (x.from >> 3) === (m.from >> 3));
+          if (!sameFile) dis = 'abcdefgh'[m.from & 7];
+          else if (!sameRank) dis = String(8 - (m.from >> 3));
+          else dis = sqName(m.from);
+        }
+        return pieceLetter(code) + dis + (cap ? 'x' : '') + dest;
+      }
+      function pgnText() {
+        const d = new Date(), pad = n => String(n).padStart(2, '0');
+        const white = mode === 'two' ? 'White' : 'You';
+        const black = mode === 'two' ? 'Black' : 'Talia (' + DIFF_NAMES[diff] + ')';
+        const lines = [
+          '[Event "NxGen Arcade"]',
+          '[Site "Offline"]',
+          '[Date "' + d.getFullYear() + '.' + pad(d.getMonth() + 1) + '.' + pad(d.getDate()) + '"]',
+          '[White "' + white + '"]',
+          '[Black "' + black + '"]',
+          '[Result "' + result + '"]',
+          ''
+        ];
+        let body = '';
+        for (let i = 0; i < sans.length; i += 2) {
+          body += (i / 2 + 1) + '. ' + sans[i] + (sans[i + 1] ? ' ' + sans[i + 1] : '') + ' ';
+        }
+        body = body.trim();
+        return lines.join('\n') + '\n' + (body ? body + ' ' + result : result) + '\n';
+      }
+
+      const tools = mk('div', 'chess-tools');
+      tools.appendChild(mk('div', 'label', 'Position'));
+      const fenIn = mk('input', 'fen');
+      fenIn.type = 'text'; fenIn.readOnly = true; fenIn.spellcheck = false;
+      fenIn.setAttribute('aria-label', 'Current position in FEN');
+      fenIn.addEventListener('focus', () => fenIn.select());
+      const trow = mk('div', 'row');
+      const btnFen = mk('button', 'btn small', 'Copy FEN'); btnFen.type = 'button';
+      const btnPgn = mk('button', 'btn small', 'Copy PGN'); btnPgn.type = 'button';
+      const toolsNote = mk('div', 'tools-note');
+      trow.appendChild(btnFen); trow.appendChild(btnPgn);
+      tools.appendChild(fenIn); tools.appendChild(trow); tools.appendChild(toolsNote);
+      function paintTools() {
+        fenIn.value = toFen(st);
+        btnPgn.disabled = !sans.length;
+        toolsNote.textContent = sans.length
+          ? Math.ceil(sans.length / 2) + ' moves · result ' + result
+          : 'No moves yet';
+      }
+      function copied(btn) {
+        const old = btn.textContent;
+        btn.textContent = 'Copied';
+        setTimeout(() => { if (btn.isConnected) btn.textContent = old; }, 1200);
+      }
+      btnFen.addEventListener('click', () => { copyText(toFen(st)); copied(btnFen); Sound.click(); });
+      btnPgn.addEventListener('click', () => { if (sans.length) { copyText(pgnText()); copied(btnPgn); Sound.click(); } });
 
       /* Threefold repetition: count every position (pieces, side to move,
          castling rights, en-passant square) as it is reached; the third
@@ -1428,6 +1524,7 @@ const chess = (() => {
         }
         if (checkSq >= 0) sqs[checkSq].classList.add('check');
         for (const t of tips) sqs[t].classList.add('hint');
+        paintTools();
       }
 
       function sync() {
@@ -1447,15 +1544,17 @@ const chess = (() => {
         let res, label;
         if (kind === 'mate') {
           if (mode === 'two') {
+            result = winner === WHITE ? '1-0' : '0-1';
             label = (winner === WHITE ? 'White' : 'Black') + ' wins by checkmate';
-            ctx.setStatus(label, 'win'); Sound.win(); ctx.end(null, label); return;
+            ctx.setStatus(label, 'win'); Sound.win(); paintTools(); ctx.end(null, label); return;
           }
-          if (winner === HUMAN) { res = 'w'; label = 'Checkmate — you win'; }
-          else { res = 'l'; label = 'Checkmate — Talia wins'; }
-        } else if (kind === 'stale') { res = 'd'; label = 'Stalemate — draw'; }
-        else if (kind === 'material') { res = 'd'; label = 'Draw — not enough material'; }
-        else if (kind === 'repeat') { res = 'd'; label = 'Draw — threefold repetition'; }
-        else { res = 'd'; label = 'Draw — fifty quiet moves'; }
+          if (winner === HUMAN) { res = 'w'; label = 'Checkmate — you win'; result = '1-0'; }
+          else { res = 'l'; label = 'Checkmate — Talia wins'; result = '0-1'; }
+        } else if (kind === 'stale') { res = 'd'; label = 'Stalemate — draw'; result = '1/2-1/2'; }
+        else if (kind === 'material') { res = 'd'; label = 'Draw — not enough material'; result = '1/2-1/2'; }
+        else if (kind === 'repeat') { res = 'd'; label = 'Draw — threefold repetition'; result = '1/2-1/2'; }
+        else { res = 'd'; label = 'Draw — fifty quiet moves'; result = '1/2-1/2'; }
+        paintTools();
 
         if (res === 'w') { ctx.setStatus('You win', 'win'); Sound.win(); }
         else if (res === 'l') { ctx.setStatus('Talia wins', 'lose'); Sound.lose(); }
@@ -1475,15 +1574,18 @@ const chess = (() => {
       }
 
       function snapshot() {
-        return { b: Int8Array.from(st.b), turn: st.turn, castle: st.castle, ep: st.ep, half: st.half, last };
+        return { b: Int8Array.from(st.b), turn: st.turn, castle: st.castle, ep: st.ep, half: st.half, full: st.full, last };
       }
 
       function doMove(m) {
         const mover = st.turn;
+        const base = sanBase(m);
         hist.push(snapshot());
         const rec = make(st, m);
         last = m; sel = null;
         bumpRep(st);
+        const replies = legal(st, st.turn);
+        sans.push(base + (inCheck(st, st.turn) ? (replies.length ? '+' : '#') : ''));
         if (rec.cap) Sound.capture(); else Sound.chip();
         afterMove(mover);
       }
@@ -1544,9 +1646,11 @@ const chess = (() => {
         over = false; ctx.clearBanner(); sel = null;
         if (promo) { promo = null; const v = board.querySelector('.promo'); if (v) v.remove(); }
         let s = hist.pop();
-        while (mode === 'ai' && s.turn !== HUMAN && hist.length) s = hist.pop();
-        st = { b: Int8Array.from(s.b), turn: s.turn, castle: s.castle, ep: s.ep, half: s.half };
+        sans.pop();
+        while (mode === 'ai' && s.turn !== HUMAN && hist.length) { s = hist.pop(); sans.pop(); }
+        st = { b: Int8Array.from(s.b), turn: s.turn, castle: s.castle, ep: s.ep, half: s.half, full: s.full };
         last = s.last || null;
+        result = '*';
         rebuildRep();
         render(); sync();
       }
@@ -1571,6 +1675,7 @@ const chess = (() => {
         window.__nxChess.load = fen => {
           if (!ctx.alive()) return false;
           st = fromFen(fen); hist = []; over = false; sel = null; last = null; tips = [];
+          sans = []; result = '*';
           rep.clear(); bumpRep(st);
           if (promo) { promo = null; const v = board.querySelector('.promo'); if (v) v.remove(); }
           ctx.clearBanner(); render(); sync();
@@ -1578,10 +1683,13 @@ const chess = (() => {
           return true;
         };
         window.__nxChess.rep = () => ({ key: posKey(st), count: rep.get(posKey(st)) || 0, positions: rep.size });
+        window.__nxChess.fen = () => ctx.alive() ? toFen(st) : null;
+        window.__nxChess.pgn = () => ctx.alive() ? pgnText() : null;
+        window.__nxChess.sans = () => ctx.alive() ? sans.slice() : null;
       }
 
       render(); sync();
-      return { undo, hint };
+      return { undo, hint, panel: tools };
     }
   };
 })();
@@ -4484,11 +4592,127 @@ function paintMute() {
   muteBtn.classList.toggle('off', store.mute);
   muteBtn.setAttribute('aria-label', store.mute ? 'Sound off' : 'Sound on');
 }
-muteBtn.addEventListener('click', () => {
+function toggleMute() {
   store.mute = !store.mute; save(); paintMute();
   if (!store.mute) Sound.click();
-});
+}
+muteBtn.addEventListener('click', toggleMute);
 backBtn.addEventListener('click', hub);
+
+/* ---------- clipboard (works under file:// and the loopback origin) ---------- */
+function copyText(text) {
+  const fallback = () => {
+    const ta = mk('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed'; ta.style.left = '-9999px'; ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(fallback);
+    return true;
+  }
+  return fallback();
+}
+
+/* ---------- stats + keyboard-shortcut sheets ---------- */
+let sheetVeil = null;
+function closeSheet() {
+  if (sheetVeil) { sheetVeil.remove(); sheetVeil = null; }
+}
+function openSheet(kind) {
+  closeSheet();
+  const veil = mk('div', 'sheet-veil');
+  const sheet = mk('div', 'sheet');
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-modal', 'true');
+  veil.addEventListener('click', e => { if (e.target === veil) closeSheet(); });
+
+  const head = mk('div', 'sheet-head');
+  const titles = mk('div');
+  const h2 = mk('h2', null, kind === 'stats' ? 'The record' : 'Keyboard shortcuts');
+  const sub = mk('p', 'sheet-sub', kind === 'stats'
+    ? 'Every finished game against Talia, counted in this browser. Hotseat games are not scored.'
+    : 'The board is a keyboard game too. These keys work from the hub and inside a game.');
+  titles.appendChild(h2); titles.appendChild(sub);
+  const x = mk('button', 'sheet-close', '✕'); x.type = 'button'; x.setAttribute('aria-label', 'Close');
+  x.addEventListener('click', closeSheet);
+  head.appendChild(titles); head.appendChild(x);
+  sheet.appendChild(head);
+
+  if (kind === 'stats') {
+    const totals = { w: 0, l: 0, d: 0 };
+    const rows = GAMES.map(g => {
+      const s = store.scores[g.id] || {};
+      const w = s.w || 0, l = s.l || 0, d = s.d || 0;
+      totals.w += w; totals.l += l; totals.d += d;
+      return { name: g.name, w, l, d, p: w + l + d };
+    });
+    const played = totals.w + totals.l + totals.d;
+
+    const box = mk('div', 'totals');
+    [[played, 'Played', ''], [totals.w, 'Wins', 'win'], [totals.l, 'Losses', 'loss'], [totals.d, 'Draws', '']]
+      .forEach(([n, label, cls]) => {
+        const cell = mk('div', 'cell' + (cls ? ' ' + cls : ''));
+        cell.appendChild(mk('b', null, String(n)));
+        cell.appendChild(mk('span', null, label));
+        box.appendChild(cell);
+      });
+    sheet.appendChild(box);
+
+    const table = mk('table', 'stat-table');
+    const thead = mk('thead');
+    thead.innerHTML = '<tr><th>Game</th><th>P</th><th>W</th><th>L</th><th>D</th><th>Win%</th></tr>';
+    const tbody = mk('tbody');
+    for (const r of rows) {
+      const tr = mk('tr');
+      if (!r.p) tr.className = 'zero';
+      const rate = r.p ? Math.round(r.w / r.p * 100) + '%' : '—';
+      [r.name, r.p, r.w, r.l, r.d, rate].forEach((v, i) => {
+        const td = mk('td', i === 5 ? 'rate' : null, String(v));
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    }
+    table.appendChild(thead); table.appendChild(tbody);
+    sheet.appendChild(table);
+    sheet.appendChild(mk('p', 'sheet-note',
+      'Stored under “nxgen.arcade.v1” in this browser. Download or clear it from the footer.'));
+  } else {
+    const list = mk('div', 'keylist');
+    list.innerHTML =
+      '<span class="sect">Everywhere</span>' +
+      '<kbd>S</kbd><span>Stats for every game</span>' +
+      '<kbd>?</kbd><span>This shortcut list</span>' +
+      '<kbd>M</kbd><span>Sound on / off</span>' +
+      '<kbd>Esc</kbd><span>Close a sheet, or go back to the board list</span>' +
+      '<span class="sect">Inside a game</span>' +
+      '<kbd>N</kbd><span>New game, same settings</span>' +
+      '<kbd>U</kbd><span>Undo your move and the reply</span>' +
+      '<kbd>H</kbd><span>Hint</span>' +
+      '<kbd>1</kbd><span>Easy mood</span>' +
+      '<kbd>2</kbd><span>Steady mood</span>' +
+      '<kbd>3</kbd><span>Ruthless mood</span>' +
+      '<span class="sect">Ball Party</span>' +
+      '<kbd>W A S D</kbd><span>Player 1</span>' +
+      '<kbd>← ↑ ↓ →</kbd><span>Player 2 (those keys always belong to the game)</span>';
+    sheet.appendChild(list);
+    sheet.appendChild(mk('p', 'sheet-note',
+      'Everything is clickable as well — no shortcut is the only way to do something.'));
+  }
+
+  veil.appendChild(sheet);
+  document.body.appendChild(veil);
+  sheetVeil = veil;
+  x.focus();
+}
+$('#stats').addEventListener('click', () => { Sound.click(); openSheet('stats'); });
+$('#help').addEventListener('click', () => { Sound.click(); openSheet('keys'); });
 
 /* ---------- record: download + reset (footer controls) ---------- */
 const COARSE = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
@@ -4531,14 +4755,23 @@ clearBtn.addEventListener('click', () => {
 let keyed = null;   // { undo, hint, newGame } for the mounted game, or null on the hub
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { hub(); return; }
-  if (!keyed || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'Escape') {
+    if (sheetVeil) closeSheet();
+    else hub();
+    return;
+  }
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === '?') { e.preventDefault(); openSheet('keys'); return; }
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (k === 's') { e.preventDefault(); openSheet('stats'); return; }
+  if (k === 'm') { e.preventDefault(); toggleMute(); return; }
+  if (!keyed) return;
   if (k === 'u') { e.preventDefault(); keyed.undo(); }
   else if (k === 'h') { e.preventDefault(); keyed.hint(); }
   else if (k === 'n') { e.preventDefault(); keyed.newGame(); }
+  else if (k === '1' || k === '2' || k === '3') { e.preventDefault(); keyed.setDiff(+k - 1); }
 });
 
 function teardown() {
@@ -4633,6 +4866,7 @@ function openGame(g) {
   let dead = false;
   const ctx = {
     boardEl: $('.boardhost', boardwrap),
+    panelEl: panel,
     mode: store.mode,
     diff: store.diff,
     alive: () => !dead,
@@ -4672,6 +4906,7 @@ function openGame(g) {
   };
 
   const ctrl = g.mount(ctx) || {};
+  if (ctrl.panel) panel.insertBefore(ctrl.panel, rules);
   live = { destroy() { dead = true; screenEl.textContent = ''; } };
 
   btnUndo.disabled = !ctrl.undo;
@@ -4683,7 +4918,13 @@ function openGame(g) {
   keyed = {
     undo: () => { if (!btnUndo.disabled && ctrl.undo) { ctrl.undo(); Sound.click(); } },
     hint: () => { if (!btnHint.disabled && ctrl.hint) ctrl.hint(); },
-    newGame: () => { Sound.click(); openGame(g); }
+    newGame: () => { Sound.click(); openGame(g); },
+    setDiff: i => {
+      if (g.hideDiff || i === store.diff) return;
+      store.diff = i; save();
+      Sound.click();
+      openGame(g);
+    }
   };
 
   $$('[data-mode]', segMode).forEach(b => b.addEventListener('click', () => {

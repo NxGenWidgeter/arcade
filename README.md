@@ -77,7 +77,8 @@ whatever Talia did in reply. **Hint** names your hand and what it costs to stay 
   castling included).
 - **Hint** — searches a shallow line for whoever is to move and flashes the square.
 - **Esc** — back to the board list. **u** / **h** / **n** — undo, hint and new game.
-  **♪** — sound on/off (all audio is synthesised, no files).
+  **1 / 2 / 3** — Easy, Steady or Ruthless without clicking. **S** — the stats sheet.
+  **?** — this list, in the app. **M** — sound on/off (all audio is synthesised, no files).
 
 ## Features
 
@@ -101,6 +102,15 @@ the game object itself.
   hub card (`1W · 2L · 0D`) and in the game panel. A fresh profile reads
   `no games played`. `Download record` in the footer saves it as JSON; `Clear record`
   wipes it after a confirm.
+- **Stats sheet** — the ▤ button (or **S**) totals every game and breaks the record down
+  per game: played, wins, losses, draws and win rate. It reads the same `localStorage`
+  record as the hub cards, so it never disagrees with them.
+- **Chess export** — the chess panel shows the live FEN and two buttons: **Copy FEN**
+  (the position, for another engine or a puzzle) and **Copy PGN** (headers plus the SAN
+  move list and result). Castling, en passant, promotion, check and mate are all
+  notated; undo takes the moves back out of the PGN too.
+- **Shortcut sheet** — the **?** button (or the key itself) lists every keyboard shortcut
+  in the app, including **1/2/3** for the three AI moods and **M** for sound.
 - **Blackjack bankroll** — chips and your bet size carry over between visits, and Deal
   stays disabled while the bank can't cover the bet.
 - **Ball Party** — eight real-time duels, five drawn per match, best of five, one
